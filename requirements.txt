@@ -1,0 +1,7 @@
+dagster>=1.13
+dagster-webserver>=1.13
+dlt[duckdb]>=1.29
+duckdb>=1.5
+requests>=2.31
+python-dotenv>=1.0
+pandas>=2.0

@@ -1,0 +1,28 @@
+# Python
+.venv/
+__pycache__/
+*.pyc
+
+# macOS
+.DS_Store
+
+# États internes dlt / Dagster (régénérés automatiquement, jamais utiles à versionner)
+.dlt/
+dagster_home/
+.pytest_cache/
+tmp*/
+storage/
+history/
+*.duckdb.wal
+
+# --- Secrets : ne JAMAIS versionner ---
+.env
+.dlt/secrets.toml
+
+# --- Dossier data/ : liste blanche, pas liste noire ---
+# Par défaut TOUT ce qui est dans data/ est ignoré (le lake DuckDB, le token
+# Withings, un futur export Spotify/Foodvisor...). Si tu ajoutes un fichier
+# que tu veux vraiment versionner (rare), ajoute une ligne "!data/mon_fichier"
+# juste en dessous, en conscience.
+data/*
+!data/.gitkeep
