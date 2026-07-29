@@ -1,0 +1,17 @@
+name: "datalake_silver"
+version: "1.0.0"
+config-version: 2
+profile: "datalake_silver"
+
+model-paths: ["models"]
+macro-paths: ["macros"]
+
+target-path: "target"
+clean-targets:
+  - "target"
+  - "dbt_packages"
+
+models:
+  datalake_silver:
+    silver:
+      +materialized: table

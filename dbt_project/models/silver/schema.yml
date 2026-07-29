@@ -1,0 +1,21 @@
+version: 2
+
+models:
+  - name: weather_daily
+    description: Météo nettoyée + amplitude thermique (temp_range).
+    columns:
+      - name: date
+        data_tests:
+          - unique
+          - not_null
+
+  - name: withings_measures
+    description: Mesures corporelles Withings nettoyées (colonnes techniques dlt retirées).
+    columns:
+      - name: grpid
+        data_tests:
+          - unique
+          - not_null
+      - name: date
+        data_tests:
+          - not_null

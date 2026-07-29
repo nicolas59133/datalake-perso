@@ -16,6 +16,12 @@ storage/
 history/
 *.duckdb.wal
 
+# États internes dbt (régénérés à chaque `dbt build`/`dbt parse`)
+dbt_project/target/
+dbt_project/logs/
+dbt_project/dbt_packages/
+dbt_project/.user.yml
+
 # --- Secrets : ne JAMAIS versionner ---
 .env
 .dlt/secrets.toml

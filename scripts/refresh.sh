@@ -11,5 +11,9 @@ if [ ! -d ".venv" ]; then
 fi
 
 echo "→ Rafraîchissement du lake ($(date '+%Y-%m-%d %H:%M'))"
-.venv/bin/dagster asset materialize --select "*" -m data_platform.definitions
+# `job execute -j refresh_all` (et non `asset materialize --select "*"`, qui
+# reconstruit un job éphémère et ignore l'executor_def=in_process_executor de
+# definitions.py) — nécessaire pour éviter les écritures concurrentes sur
+# DuckDB. Voir CLAUDE.md.
+.venv/bin/dagster job execute -m data_platform.definitions -j refresh_all
 echo "→ Terminé. Lake à jour : data/datalake.duckdb"

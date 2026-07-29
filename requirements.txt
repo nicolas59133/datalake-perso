@@ -5,3 +5,14 @@ duckdb>=1.5
 requests>=2.31
 python-dotenv>=1.0
 pandas>=2.0
+
+# Couche silver : modèles dbt (dbt-duckdb), voir dbt_project/ et CLAUDE.md.
+dbt-core>=1.12
+dbt-duckdb>=1.10
+# ATTENTION : après ce fichier, lance aussi (obligatoire sur Python 3.14) :
+#   pip install --upgrade "mashumaro[msgpack]>=3.22"
+# dbt-core plafonne mashumaro à <3.18, mais cette version a un bug interne
+# (JSONObjectSchema) qui casse tout import dbt sur Python 3.14 — corrigé dans
+# les versions plus récentes. Impossible à exprimer dans CE fichier : dbt-core
+# et mashumaro>=3.22 sont mutuellement exclusifs pour un seul `pip install -r`
+# (ResolutionImpossible). D'où la commande séparée. Voir CLAUDE.md.

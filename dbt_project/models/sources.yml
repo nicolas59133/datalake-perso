@@ -1,0 +1,11 @@
+version: 2
+
+sources:
+  - name: bronze
+    schema: bronze
+    description: Tables brutes chargées par les assets Dagster/dlt (data_platform/assets/bronze.py).
+    tables:
+      - name: weather_daily
+        description: Relevés météo journaliers (Open-Meteo), un par date.
+      - name: withings_measures
+        description: Groupes de mesures corporelles Withings, un par grpid.

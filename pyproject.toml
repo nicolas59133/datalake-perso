@@ -8,6 +8,9 @@ requires-python = ">=3.10"
 module_name = "data_platform.definitions"
 code_location_name = "data_platform"
 
+[tool.pytest.ini_options]
+pythonpath = ["."]
+
 [build-system]
 requires = ["setuptools"]
 build-backend = "setuptools.build_meta"

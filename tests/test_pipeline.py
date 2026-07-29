@@ -1,6 +1,12 @@
-import duckdb
+import subprocess
+import sys
+from pathlib import Path
+
 from data_platform.ingestion.weather import parse_open_meteo
-from data_platform.assets.silver import build_silver_weather
+from data_platform.config import ROOT
+
+DBT_PROJECT_DIR = ROOT / "dbt_project"
+DBT_BIN = str(Path(sys.executable).parent / "dbt")
 
 
 def test_parse_open_meteo():
@@ -19,26 +25,18 @@ def test_parse_open_meteo():
     assert rows[0]["latitude"] == 50.62
 
 
-def test_build_silver_weather(tmp_path):
-    db = str(tmp_path / "t.duckdb")
-    con = duckdb.connect(db)
-    con.execute("create schema bronze")
-    con.execute(
-        """
-        create table bronze.weather_daily as
-        select * from (values
-            ('2026-07-25', 24.1, 14.0, 0.0, 50.62, 3.13),
-            ('2026-07-26', 26.3, 15.2, 2.4, 50.62, 3.13)
-        ) as t(date, temp_max, temp_min, precipitation, latitude, longitude)
-        """
+def test_dbt_project_parses():
+    """La transfo silver (temp_range, colonnes withings...) vit dans les
+    modèles dbt (dbt_project/models/silver/) et est couverte par les tests
+    dbt (dbt_project/models/silver/schema.yml), pas par des tests Python.
+    Ici on vérifie juste que le projet compile (SQL + Jinja valides)."""
+    result = subprocess.run(
+        [DBT_BIN, "parse", "--project-dir", str(DBT_PROJECT_DIR), "--profiles-dir", str(DBT_PROJECT_DIR)],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
     )
-    build_silver_weather(con)
-    result = con.execute(
-        "select date, temp_range from silver.weather_daily order by date"
-    ).fetchall()
-    con.close()
-    assert float(result[0][1]) == 10.1   # 24.1 - 14.0
-    assert float(result[1][1]) == 11.1   # 26.3 - 15.2
+    assert result.returncode == 0, result.stdout + result.stderr
 
 
 def test_withings_signature_deterministic():

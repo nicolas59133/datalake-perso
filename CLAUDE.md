@@ -4,11 +4,14 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Vue d'ensemble
 
-Datalake personnel, 100% local. Dagster orchestre des pipelines `dlt` qui écrivent
-dans un **unique fichier DuckDB** (`data/datalake.duckdb`), organisé en couches
-**bronze** (ingestion brute) → **silver** (nettoyage/typage SQL). Deux sources
-aujourd'hui : météo (Open-Meteo, aucune config requise) et Withings (mesures
-corporelles, OAuth2 signé HMAC).
+Datalake personnel, 100% local. Dagster orchestre :
+- des pipelines `dlt` qui écrivent dans un **unique fichier DuckDB**
+  (`data/datalake.duckdb`), couche **bronze** (ingestion brute) ;
+- des modèles **dbt** (dbt-duckdb) qui construisent la couche **silver**
+  (nettoyage/typage) à partir du bronze.
+
+Deux sources aujourd'hui : météo (Open-Meteo, aucune config requise) et
+Withings (mesures corporelles, OAuth2 signé HMAC).
 
 ## Commandes
 
@@ -17,11 +20,22 @@ corporelles, OAuth2 signé HMAC).
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
+pip install --upgrade "mashumaro[msgpack]>=3.22"   # obligatoire, voir "Python 3.14 vs dbt" plus bas
 ```
 Le venv est lié au chemin absolu où il a été créé (shebang de `pip`/`dagster` dans
 `.venv/bin`). Si le dossier du projet est déplacé/renommé après coup, ces
 commandes cassent silencieusement (`command not found`) — recréer le venv
 (`rm -rf .venv && python3 -m venv .venv && pip install -r requirements.txt`).
+
+Si `pip install` échoue avec `SSL: CERTIFICATE_VERIFY_FAILED` (typiquement sur
+`dbt-core-experimental-parser`, qui télécharge un wheel prébuilt depuis
+GitHub pendant le build) : le Python système (python.org,
+`/Library/Frameworks/Python.framework/...`) n'a pas de CA bundle configuré.
+Fix : lancer `/Applications/Python 3.x/Install Certificates.command`, ou
+`export SSL_CERT_FILE=.venv/lib/python3.14/site-packages/certifi/cacert.pem`
+une fois `requests` installé (il tire `certifi`). Seulement nécessaire pour
+les installs — `dbt build`/`dagster dev` n'ont pas besoin de réseau donc
+tournent sans ce fix une fois les paquets installés.
 
 ### Lancer Dagster (UI + daemon + scheduler)
 ```bash
@@ -41,13 +55,23 @@ dagster asset materialize --select "bronze/withings_measures" -m data_platform.d
 dagster job execute -m data_platform.definitions -j refresh_all   # tout le pipeline, séquentiel
 ```
 
+### Lancer/déboguer dbt directement (hors Dagster)
+```bash
+export DUCKDB_PATH="$PWD/data/datalake.duckdb"   # sinon fallback data/datalake.duckdb relatif au cwd
+.venv/bin/dbt build --project-dir dbt_project --profiles-dir dbt_project
+.venv/bin/dbt build --project-dir dbt_project --profiles-dir dbt_project --select weather_daily
+```
+Toujours invoquer depuis la racine du repo (les chemins relatifs de
+`dbt_project/profiles.yml` en dépendent).
+
 ### Tests
 ```bash
-pip install pytest
 pytest -q
 pytest -q tests/test_pipeline.py::test_parse_open_meteo   # un seul test
 ```
-Pas de config pytest dans `pyproject.toml` — un seul fichier `tests/test_pipeline.py`.
+`[tool.pytest.ini_options] pythonpath = ["."]` dans `pyproject.toml` — sans
+ça, `pytest -q` (sans `python -m`) ne trouve pas le package `data_platform`
+(pytest n'ajoute pas le cwd à `sys.path`, contrairement à `python -m pytest`).
 
 ### Activer Withings (une fois par machine)
 ```bash
@@ -69,9 +93,18 @@ tourner le refresh_token, `withings.py` le re-sauvegarde automatiquement).
 - `data_platform/assets/bronze.py` — un asset Dagster par source. Chaque asset
   instancie **son propre** `dlt.pipeline(destination=duckdb(DUCKDB_PATH),
   dataset_name="bronze")` et écrit dans le schéma `bronze`.
-- `data_platform/assets/silver.py` — transformations SQL DuckDB pures
-  (`build_silver_weather`) appelées par un asset qui déclare sa dépendance
-  bronze via `deps=[dg.AssetKey([...])]`.
+- `dbt_project/` — modèles SQL de la couche silver (`models/silver/*.sql`),
+  déclarant les tables bronze comme `source()` (`models/sources.yml`). Schéma
+  cible = `silver` (profiles.yml), donc `models/silver/weather_daily.sql`
+  produit `silver.weather_daily` (pas de préfixe grâce à l'override standard
+  `macros/generate_schema_name.sql`). Tests dbt (`not_null`/`unique`) dans
+  `models/silver/schema.yml`.
+- `data_platform/assets/silver.py` — **PAS** l'intégration `dagster-dbt`
+  (voir contrainte ci-dessous). Un `@dg.multi_asset` (`silver_dbt_models`)
+  qui lance `dbt build` en subprocess et déclare à la main un `AssetSpec` par
+  modèle dbt (avec `deps` vers l'asset bronze source), pour garder un noeud
+  par table dans l'UI Dagster malgré l'absence de génération auto depuis le
+  manifest dbt.
 - `data_platform/definitions.py` — point d'entrée Dagster, référencé par
   `pyproject.toml` (`[tool.dagster] module_name`). Assemble les assets, le job
   `refresh_all` et le schedule quotidien.
@@ -80,18 +113,45 @@ tourner le refresh_token, `withings.py` le re-sauvegarde automatiquement).
   (`getnonce`, `requesttoken`) ; `scripts/withings_auth.py` ne sert qu'au flow
   OAuth initial dans le navigateur.
 
+### Contrainte : Python 3.14 vs écosystème dbt
+
+Cette machine n'a que Python 3.14 (pas de pyenv/Homebrew pour en installer un
+autre). Deux blocages rencontrés, à garder en tête si on retouche `dbt_project/`
+ou les deps dbt :
+- **`dagster-dbt` (intégration officielle) est inutilisable ici.** Sa dernière
+  version (0.28.8) épingle `dagster==1.12.8` exact, qui ne supporte pas
+  Python 3.14 (seul `dagster>=1.12.9` le supporte). D'où le wrapper
+  `subprocess` manuel dans `assets/silver.py` plutôt que `@dbt_assets`. À
+  réévaluer si une version plus récente de `dagster-dbt` sort.
+- **`mashumaro` (dépendance de dbt-core/dbt-adapters/dbt-common) a un bug
+  interne sur Python 3.14** : sa propre classe `JSONObjectSchema` (utilisée
+  pour générer le manifest JSON schema) ne compile pas
+  (`UnserializableField: Field "schema"...`), quelle que soit la version de
+  dbt-core testée (1.5 à 1.12). dbt-core plafonne `mashumaro<3.18`, mais ce
+  plafond casse tout import dbt sur cette machine ; la version installée
+  (`>=3.22`, forcée en `pip install --upgrade` séparé après
+  `requirements.txt`, impossible à exprimer dans le même fichier — voir
+  commentaire dans `requirements.txt`) fonctionne malgré l'avertissement de
+  conflit pip.
+- Une install `pip` "propre" de `dagster-dbt` sans épingler `dagster` fait
+  **downgrader dagster à 1.6.6** (incompatible avec `dagster-webserver`
+  1.13.15) — toujours fixer les versions du trio
+  `dagster`/`dagster-webserver`/`dagster-graphql` ensemble si on retouche ces
+  deps.
+
 ### Contrainte : DuckDB n'autorise qu'un seul writer
 
 Les assets bronze n'ont pas de dépendance entre eux, donc Dagster peut vouloir
 les exécuter en parallèle — ce qui produit `IO Error: Could not set lock on
 file datalake.duckdb` puisque DuckDB refuse les écritures concurrentes sur le
-même fichier. Le job `refresh_all` (`definitions.py`) fixe donc
-`executor_def=dg.in_process_executor` pour forcer une exécution séquentielle.
-Piège : `dagster asset materialize --select "..."` (utilisé par
-`scripts/refresh.sh`) construit un job éphémère qui **ignore cet
-executor_def** et retombe sur le multiprocess executor par défaut — la
-collision reste donc possible par ce chemin. Passer par `dagster job execute
--j refresh_all` la respecte.
+même fichier (même souci pour le subprocess `dbt build` de `silver.py` s'il
+tournait en même temps qu'un asset bronze). Le job `refresh_all`
+(`definitions.py`) fixe donc `executor_def=dg.in_process_executor` pour
+forcer une exécution séquentielle. Piège : `dagster asset materialize
+--select "..."` construit un job éphémère qui **ignore cet executor_def** et
+retombe sur le multiprocess executor par défaut — la collision reste donc
+possible par ce chemin (`scripts/refresh.sh` utilise donc `dagster job
+execute -j refresh_all`, pas `asset materialize`).
 
 ## Sécurité / données sensibles
 

@@ -1,0 +1,10 @@
+datalake_silver:
+  target: dev
+  outputs:
+    dev:
+      type: duckdb
+      # DUCKDB_PATH est toujours passé explicitement par definitions.py (asset dbt) ;
+      # le défaut ci-dessous ne sert qu'en appel manuel depuis la racine du repo.
+      path: "{{ env_var('DUCKDB_PATH', 'data/datalake.duckdb') }}"
+      schema: silver
+      threads: 1
