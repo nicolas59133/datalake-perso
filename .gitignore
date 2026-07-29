@@ -9,6 +9,7 @@ __pycache__/
 # États internes dlt / Dagster (régénérés automatiquement, jamais utiles à versionner)
 .dlt/
 dagster_home/
+.tmp_dagster_home_*/
 .pytest_cache/
 tmp*/
 storage/
