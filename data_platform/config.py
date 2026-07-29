@@ -15,11 +15,18 @@ load_dotenv(ROOT / ".env")
 
 # Le "lake" : un simple fichier DuckDB sur ton disque.
 DUCKDB_PATH = os.getenv("DUCKDB_PATH", str(ROOT / "data" / "datalake.duckdb"))
+# Copie dédiée à la visualisation (UI DuckDB, scripts/duckdb_ui.py), mise à
+# jour par l'asset ops/duckdb_view_snapshot après chaque run. DuckDB n'autorise
+# qu'un writer/lecteur à la fois sur un même fichier (même en lecture seule) ;
+# séparer le fichier "vue" du fichier "écrit par le pipeline" évite tout lock
+# concurrent entre l'UI (ouverte en continu) et Dagster/dbt.
+DUCKDB_VIEW_PATH = os.getenv("DUCKDB_VIEW_PATH", str(ROOT / "data" / "datalake_view.duckdb"))
 
 # --- Source météo (Lille par défaut) ---
 LATITUDE = float(os.getenv("LATITUDE", "50.6292"))
 LONGITUDE = float(os.getenv("LONGITUDE", "3.0573"))
-PAST_DAYS = int(os.getenv("PAST_DAYS", "7"))
+# Historique chargé à chaque run (API archive Open-Meteo, voir ingestion/weather.py).
+WEATHER_START_DATE = os.getenv("WEATHER_START_DATE", "2018-01-01")
 
 # --- Source Withings ---
 WITHINGS_CLIENT_ID = os.getenv("WITHINGS_CLIENT_ID", "")

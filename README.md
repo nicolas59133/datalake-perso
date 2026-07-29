@@ -46,8 +46,19 @@ Ouvre http://localhost:3000 → onglet **Assets** → **Materialize all**.
 
 ## Regarder les données
 
+**UI DuckDB (recommandé)** — explorateur de schéma + éditeur SQL dans le navigateur :
 ```bash
-python -c "import duckdb; c=duckdb.connect('data/datalake.duckdb'); \
+.venv/bin/python scripts/duckdb_ui.py
+```
+Puis ouvre http://localhost:4213. Se branche sur une copie dédiée
+(`data/datalake_view.duckdb`, régénérée à chaque `refresh_all`) plutôt que sur
+le fichier live : DuckDB n'autorisant qu'un writer/lecteur à la fois par
+fichier, cette copie permet de laisser l'UI ouverte sans jamais faire échouer
+un run Dagster.
+
+**En ligne de commande**, sur cette même copie :
+```bash
+python -c "import duckdb; c=duckdb.connect('data/datalake_view.duckdb'); \
 print(c.execute('select * from silver.weather_daily order by date').fetchdf())"
 ```
 

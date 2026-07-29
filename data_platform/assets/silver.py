@@ -10,13 +10,14 @@ assets bronze correspondants — même niveau de granularité dans l'UI Dagster,
 sans la génération automatique.
 """
 import os
+import shutil
 import subprocess
 import sys
 from pathlib import Path
 
 import dagster as dg
 
-from data_platform.config import DUCKDB_PATH, ROOT
+from data_platform.config import DUCKDB_PATH, DUCKDB_VIEW_PATH, ROOT
 
 DBT_PROJECT_DIR = ROOT / "dbt_project"
 # Utilise l'exécutable dbt du même venv que Dagster, sans dépendre du PATH courant.
@@ -64,3 +65,26 @@ def silver_dbt_models(context: dg.AssetExecutionContext):
 
     for spec in SILVER_SPECS:
         yield dg.MaterializeResult(asset_key=spec.key)
+
+
+@dg.asset(
+    key=["ops", "duckdb_view_snapshot"],
+    group_name="ops",
+    kinds={"duckdb"},
+    deps=[spec.key for spec in SILVER_SPECS],
+    description=(
+        "Copie de data/datalake.duckdb dédiée à scripts/duckdb_ui.py. DuckDB "
+        "n'autorise qu'un writer/lecteur à la fois par fichier ; sans cette "
+        "copie séparée, garder l'UI ouverte ferait échouer tout run Dagster "
+        "avec un lock conflict."
+    ),
+)
+def refresh_view_snapshot(context: dg.AssetExecutionContext) -> dg.MaterializeResult:
+    shutil.copyfile(DUCKDB_PATH, DUCKDB_VIEW_PATH)
+    wal = f"{DUCKDB_PATH}.wal"
+    if os.path.exists(wal):
+        shutil.copyfile(wal, f"{DUCKDB_VIEW_PATH}.wal")
+    context.log.info(f"Snapshot de visualisation mis à jour : {DUCKDB_VIEW_PATH}")
+    return dg.MaterializeResult(
+        metadata={"path": dg.MetadataValue.text(DUCKDB_VIEW_PATH)}
+    )

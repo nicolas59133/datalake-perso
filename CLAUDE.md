@@ -82,6 +82,14 @@ cp .env.example .env   # coller WITHINGS_CLIENT_ID / WITHINGS_CLIENT_SECRET
 Ensuite l'ingestion rafraîchit le token toute seule à chaque run (Withings fait
 tourner le refresh_token, `withings.py` le re-sauvegarde automatiquement).
 
+### Visualiser les données (UI DuckDB)
+```bash
+.venv/bin/python scripts/duckdb_ui.py
+```
+→ http://localhost:4213. Se branche sur la copie `data/datalake_view.duckdb`
+(jamais le fichier live), donc peut rester ouvert indéfiniment sans bloquer
+les runs Dagster — voir "Contrainte : DuckDB n'autorise qu'un seul writer".
+
 ## Architecture
 
 - `data_platform/config.py` — charge `.env` et centralise tous les settings
@@ -152,6 +160,18 @@ forcer une exécution séquentielle. Piège : `dagster asset materialize
 retombe sur le multiprocess executor par défaut — la collision reste donc
 possible par ce chemin (`scripts/refresh.sh` utilise donc `dagster job
 execute -j refresh_all`, pas `asset materialize`).
+
+Autre source de collision, définitivement réglée : l'UI DuckDB locale
+(`scripts/duckdb_ui.py`) ouvre une connexion persistante — testé empiriquement
+(voir historique), même une connexion **read-only** d'un autre process bloque
+un writer DuckDB, donc "juste ouvrir l'UI en lecture seule" ne suffit pas.
+Solution : l'UI ne se branche jamais sur `data/datalake.duckdb` (le fichier
+écrit par le pipeline) mais sur une **copie dédiée**, `DUCKDB_VIEW_PATH`
+(`data/datalake_view.duckdb`), régénérée par l'asset
+`ops/duckdb_view_snapshot` (dernier step de `refresh_all`, dépend des deux
+assets silver). L'UI peut donc rester ouverte indéfiniment sans jamais
+bloquer un run — au prix d'une vue figée au dernier `refresh_all` plutôt que
+vraiment live.
 
 ## Sécurité / données sensibles
 

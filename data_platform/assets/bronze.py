@@ -9,7 +9,7 @@ import duckdb
 import dagster as dg
 from dlt.destinations import duckdb as duckdb_dest
 
-from data_platform.config import DUCKDB_PATH, LATITUDE, LONGITUDE, PAST_DAYS
+from data_platform.config import DUCKDB_PATH, LATITUDE, LONGITUDE, WEATHER_START_DATE
 from data_platform.ingestion.weather import weather_daily
 from data_platform.ingestion.withings import withings_measures
 
@@ -34,7 +34,7 @@ def bronze_weather_daily(context: dg.AssetExecutionContext) -> dg.MaterializeRes
         destination=duckdb_dest(DUCKDB_PATH),
         dataset_name="bronze",
     )
-    pipeline.run(weather_daily(LATITUDE, LONGITUDE, PAST_DAYS))
+    pipeline.run(weather_daily(LATITUDE, LONGITUDE, WEATHER_START_DATE))
     rows = _count("bronze.weather_daily")
     context.log.info(f"{rows} lignes météo en bronze")
     return dg.MaterializeResult(
