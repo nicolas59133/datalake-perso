@@ -16,13 +16,15 @@ def test_parse_open_meteo():
             "temperature_2m_max": [24.1, 26.3],
             "temperature_2m_min": [14.0, 15.2],
             "precipitation_sum": [0.0, 2.4],
+            "pressure_msl_mean": [1013.2, 1009.8],
         }
     }
-    rows = parse_open_meteo(payload, 50.62, 3.13)
+    rows = parse_open_meteo(payload, 50.6292, 3.0573)
     assert len(rows) == 2
     assert rows[0]["date"] == "2026-07-25"
     assert rows[1]["temp_max"] == 26.3
-    assert rows[0]["latitude"] == 50.62
+    assert rows[0]["pressure_msl"] == 1013.2
+    assert rows[0]["latitude"] == 50.6292
 
 
 def test_dbt_project_parses():

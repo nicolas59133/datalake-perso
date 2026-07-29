@@ -4,6 +4,7 @@ select
     temp_min,
     round(temp_max - temp_min, 1) as temp_range,
     precipitation,
+    pressure_msl,
     latitude,
     longitude
 from {{ source('bronze', 'weather_daily') }}

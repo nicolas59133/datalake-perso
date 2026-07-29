@@ -16,9 +16,9 @@ load_dotenv(ROOT / ".env")
 # Le "lake" : un simple fichier DuckDB sur ton disque.
 DUCKDB_PATH = os.getenv("DUCKDB_PATH", str(ROOT / "data" / "datalake.duckdb"))
 
-# --- Source météo (Villeneuve-d'Ascq par défaut) ---
-LATITUDE = float(os.getenv("LATITUDE", "50.62"))
-LONGITUDE = float(os.getenv("LONGITUDE", "3.13"))
+# --- Source météo (Lille par défaut) ---
+LATITUDE = float(os.getenv("LATITUDE", "50.6292"))
+LONGITUDE = float(os.getenv("LONGITUDE", "3.0573"))
 PAST_DAYS = int(os.getenv("PAST_DAYS", "7"))
 
 # --- Source Withings ---

@@ -20,6 +20,7 @@ def parse_open_meteo(payload: dict, latitude: float, longitude: float) -> list[d
     tmax = daily.get("temperature_2m_max", []) or []
     tmin = daily.get("temperature_2m_min", []) or []
     prcp = daily.get("precipitation_sum", []) or []
+    pressure = daily.get("pressure_msl_mean", []) or []
 
     rows: list[dict] = []
     for i, day in enumerate(dates):
@@ -29,6 +30,7 @@ def parse_open_meteo(payload: dict, latitude: float, longitude: float) -> list[d
                 "temp_max": tmax[i] if i < len(tmax) else None,
                 "temp_min": tmin[i] if i < len(tmin) else None,
                 "precipitation": prcp[i] if i < len(prcp) else None,
+                "pressure_msl": pressure[i] if i < len(pressure) else None,
                 "latitude": latitude,
                 "longitude": longitude,
             }
@@ -43,7 +45,7 @@ def weather_daily(latitude: float, longitude: float, past_days: int = 7):
     params = {
         "latitude": latitude,
         "longitude": longitude,
-        "daily": "temperature_2m_max,temperature_2m_min,precipitation_sum",
+        "daily": "temperature_2m_max,temperature_2m_min,precipitation_sum,pressure_msl_mean",
         "timezone": "auto",
         "past_days": past_days,
         "forecast_days": 1,

@@ -2,7 +2,7 @@ version: 2
 
 models:
   - name: weather_daily
-    description: Météo nettoyée + amplitude thermique (temp_range).
+    description: Météo Lille nettoyée (Open-Meteo) — température, précipitations, pression atmosphérique moyenne + amplitude thermique (temp_range).
     columns:
       - name: date
         data_tests:
