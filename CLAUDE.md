@@ -10,8 +10,10 @@ Datalake personnel, 100% local. Dagster orchestre :
 - des modèles **dbt** (dbt-duckdb) qui construisent la couche **silver**
   (nettoyage/typage) à partir du bronze.
 
-Deux sources aujourd'hui : météo (Open-Meteo, aucune config requise) et
-Withings (mesures corporelles, OAuth2 signé HMAC).
+Quatre sources aujourd'hui : météo (Open-Meteo, aucune config requise),
+Withings (mesures corporelles, OAuth2 signé HMAC), Apple Health (export
+manuel `export.xml`, pas d'API — voir APPLE_HEALTH.md) et Google Health /
+Fitbit Air (OAuth2 standard — voir GOOGLE_HEALTH.md).
 
 ## Commandes
 
@@ -82,6 +84,15 @@ cp .env.example .env   # coller WITHINGS_CLIENT_ID / WITHINGS_CLIENT_SECRET
 Ensuite l'ingestion rafraîchit le token toute seule à chaque run (Withings fait
 tourner le refresh_token, `withings.py` le re-sauvegarde automatiquement).
 
+### Activer Google Health / Fitbit Air (une fois par machine)
+```bash
+cp .env.example .env   # coller GOOGLE_HEALTH_CLIENT_ID / GOOGLE_HEALTH_CLIENT_SECRET
+                        # (créés dans Google Cloud Console, client OAuth type "Desktop app")
+.venv/bin/python scripts/google_health_auth.py   # flow OAuth interactif -> data/google_health_token.json
+```
+Contrairement à Withings, le refresh_token Google ne tourne pas à chaque
+usage (pas de resauvegarde nécessaire à chaque run).
+
 ### Visualiser les données (UI DuckDB)
 ```bash
 .venv/bin/python scripts/duckdb_ui.py
@@ -93,8 +104,9 @@ les runs Dagster — voir "Contrainte : DuckDB n'autorise qu'un seul writer".
 ## Architecture
 
 - `data_platform/config.py` — charge `.env` et centralise tous les settings
-  (`DUCKDB_PATH`, coordonnées météo, credentials Withings). Le reste du code
-  importe toujours depuis ce module plutôt que de lire `os.getenv` directement.
+  (`DUCKDB_PATH`, coordonnées météo, credentials Withings/Google Health,
+  chemin d'export Apple Health). Le reste du code importe toujours depuis ce
+  module plutôt que de lire `os.getenv` directement.
 - `data_platform/ingestion/*.py` — resources `dlt` (`@dlt.resource`). Le parsing
   est volontairement séparé de l'appel réseau (`parse_open_meteo`,
   `parse_measures`) pour rester testable sans requête HTTP.
@@ -120,6 +132,27 @@ les runs Dagster — voir "Contrainte : DuckDB n'autorise qu'un seul writer".
   HMAC-SHA256 + nonce exigée par l'API Withings pour chaque appel signé
   (`getnonce`, `requesttoken`) ; `scripts/withings_auth.py` ne sert qu'au flow
   OAuth initial dans le navigateur.
+- `data_platform/ingestion/apple_health.py` — parse `export.xml` en streaming
+  (`ET.iterparse` + `elem.clear()`, pas de DOM complet en mémoire : l'export
+  peut faire plusieurs centaines de Mo). Un seul passage alimente 3 tables
+  (`health_records`/`health_workouts`/`health_activity_summary`) ; l'asset
+  bronze (`bronze_apple_health`, multi_asset) appelle `apple_health_resources()`
+  une fois et passe les 3 `dlt.resource(...)` à un seul `pipeline.run([...])`
+  pour ne pas reparser le fichier 3 fois. Comme Apple ne fournit pas d'ID
+  stable par enregistrement, `record_id`/`workout_id` sont des hash SHA1
+  déterministes (type/source/dates/valeur) — le `merge` dlt dédoublonne bien
+  entre deux exports qui se chevauchent tant que ces champs ne changent pas.
+- `data_platform/ingestion/google_health.py` — OAuth2 standard (auth
+  `accounts.google.com`, token `oauth2.googleapis.com`, contrairement au HMAC
+  maison de Withings). `google_health_resources()` récupère UN access_token
+  et l'utilise pour les 4 appels API (steps/heart-rate/sleep/weight), pas un
+  refresh par type. Pas de filtre de date côté requête : comme la météo, on
+  retélécharge tout à chaque run et le `merge` dlt (sur `dataPoint["name"]`,
+  un ID stable côté Google — pas besoin de hash synthétique ici,
+  contrairement à Apple Health) dédoublonne. **Schémas `parse_xxx()` non
+  vérifiés contre un vrai compte** (construits à partir de la doc publique
+  Google, jamais testés en conditions réelles) — voir GOOGLE_HEALTH.md si un
+  type de donnée renvoie des colonnes vides après le premier run réel.
 
 ### Contrainte : Python 3.14 vs écosystème dbt
 
@@ -168,17 +201,19 @@ un writer DuckDB, donc "juste ouvrir l'UI en lecture seule" ne suffit pas.
 Solution : l'UI ne se branche jamais sur `data/datalake.duckdb` (le fichier
 écrit par le pipeline) mais sur une **copie dédiée**, `DUCKDB_VIEW_PATH`
 (`data/datalake_view.duckdb`), régénérée par l'asset
-`ops/duckdb_view_snapshot` (dernier step de `refresh_all`, dépend des deux
+`ops/duckdb_view_snapshot` (dernier step de `refresh_all`, dépend de tous les
 assets silver). L'UI peut donc rester ouverte indéfiniment sans jamais
 bloquer un run — au prix d'une vue figée au dernier `refresh_all` plutôt que
 vraiment live.
 
 ## Sécurité / données sensibles
 
-- Les secrets (clés/tokens Withings, futures clés d'API) vont **uniquement**
-  dans `.env`, jamais en dur dans le code. `config.py` est le seul point de
-  lecture (`os.getenv`) ; tout le reste du code importe ses valeurs depuis là.
-- `.env` (clés Withings) et tout `data/` (lake DuckDB + `withings_token.json`)
-  sont exclus de Git via `.gitignore`, en liste blanche : **tout** `data/*` est
-  ignoré par défaut, sauf ajout explicite (`!data/mon_fichier`).
+- Les secrets (clés/tokens Withings, Google Health, futures clés d'API) vont
+  **uniquement** dans `.env`, jamais en dur dans le code. `config.py` est le
+  seul point de lecture (`os.getenv`) ; tout le reste du code importe ses
+  valeurs depuis là.
+- `.env` (clés Withings/Google Health) et tout `data/` (lake DuckDB, tokens,
+  export Apple Health) sont exclus de Git via `.gitignore`, en liste blanche :
+  **tout** `data/*` est ignoré par défaut, sauf ajout explicite
+  (`!data/mon_fichier`).
 - Ne jamais `git add -f` un fichier dans `data/`.

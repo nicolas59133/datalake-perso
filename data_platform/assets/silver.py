@@ -39,6 +39,39 @@ SILVER_SPECS = [
         deps=[dg.AssetKey(["bronze", "withings_measures"])],
         description="Mesures Withings nettoyées (modèle dbt : dbt_project/models/silver/withings_measures.sql).",
     ),
+    dg.AssetSpec(
+        key=["silver", "health_daily"],
+        group_name="silver",
+        kinds={"dbt", "duckdb"},
+        deps=[dg.AssetKey(["bronze", "health_records"])],
+        description="Apple Health pivoté par jour : pas, distance, fréquence cardiaque, sommeil (modèle dbt : dbt_project/models/silver/health_daily.sql).",
+    ),
+    dg.AssetSpec(
+        key=["silver", "health_workouts"],
+        group_name="silver",
+        kinds={"dbt", "duckdb"},
+        deps=[dg.AssetKey(["bronze", "health_workouts"])],
+        description="Séances de sport Apple Health nettoyées (modèle dbt : dbt_project/models/silver/health_workouts.sql).",
+    ),
+    dg.AssetSpec(
+        key=["silver", "health_activity_summary"],
+        group_name="silver",
+        kinds={"dbt", "duckdb"},
+        deps=[dg.AssetKey(["bronze", "health_activity_summary"])],
+        description="Anneaux d'activité Apple Health nettoyés (modèle dbt : dbt_project/models/silver/health_activity_summary.sql).",
+    ),
+    dg.AssetSpec(
+        key=["silver", "google_health_daily"],
+        group_name="silver",
+        kinds={"dbt", "duckdb"},
+        deps=[
+            dg.AssetKey(["bronze", "google_health_steps"]),
+            dg.AssetKey(["bronze", "google_health_heart_rate"]),
+            dg.AssetKey(["bronze", "google_health_sleep"]),
+            dg.AssetKey(["bronze", "google_health_weight"]),
+        ],
+        description="Fitbit Air / Google Health pivoté par jour (modèle dbt : dbt_project/models/silver/google_health_daily.sql).",
+    ),
 ]
 
 

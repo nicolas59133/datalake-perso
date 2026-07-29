@@ -1,8 +1,9 @@
 # Datalake perso — Dagster + dlt + DuckDB
 
-Point de départ de la plateforme data, en **local sur ton ordi**. Deux sources —
-météo (Open-Meteo, aucune config) et Withings (mesures corporelles, OAuth) —
-rangées en couches **bronze → silver** dans un fichier **DuckDB**, le tout
+Point de départ de la plateforme data, en **local sur ton ordi**. Quatre sources —
+météo (Open-Meteo, aucune config), Withings (mesures corporelles, OAuth),
+Apple Health (export manuel) et Google Health / Fitbit Air (OAuth) — rangées
+en couches **bronze → silver** dans un fichier **DuckDB**, le tout
 **orchestré et lancé par Dagster**. La couche silver est faite de modèles
 **dbt** (dbt-duckdb).
 
@@ -14,6 +15,8 @@ data_platform/
   ingestion/
     weather.py              # source météo (dlt) — marche tout de suite
     withings.py             # source Withings (OAuth signé HMAC)
+    apple_health.py         # source Apple Health (parsing export.xml en streaming)
+    google_health.py        # source Google Health / Fitbit Air (OAuth2 standard)
   assets/
     bronze.py               # assets Dagster : ingestion brute -> DuckDB (schéma bronze)
     silver.py               # asset Dagster qui lance `dbt build` (schéma silver)
@@ -86,7 +89,9 @@ ouvrir l'interface.
    `dbt_project/models/sources.yml`, et ajoute son `AssetSpec` (avec `deps`
    vers l'asset bronze) dans `assets/silver.py`.
 
-Withings est déjà actif — voir **WITHINGS.md** pour l'auth.
+Withings est déjà actif — voir **WITHINGS.md** pour l'auth. Apple Health aussi
+— voir **APPLE_HEALTH.md** (export manuel, pas d'API). Google Health / Fitbit
+Air aussi — voir **GOOGLE_HEALTH.md** (OAuth2).
 
 ## Prochaines étapes suggérées
 
@@ -97,6 +102,10 @@ Withings est déjà actif — voir **WITHINGS.md** pour l'auth.
 - Un modèle **gold** (dbt) si des agrégats/jointures entre sources deviennent utiles.
 - **Cloudflare R2 + Parquet/Iceberg** quand tu veux sortir le stockage de l'ordi.
 - **MotherDuck / BigQuery** le jour où le volume dépasse ta machine — mêmes modèles.
+- **Foodvisor** : pas de source possible pour l'instant — aucune API publique
+  pour les données perso (juste une "Vision API" B2B). Seules options : export
+  CSV manuel limité depuis l'app, ou demande RGPD (article 15) pour un export
+  complet — ponctuel, pas automatisable en l'état.
 
 > Rappel données sensibles : santé + banque = secrets hors du code (.env), et
 > `data/*.duckdb` est déjà exclu de Git via `.gitignore`.

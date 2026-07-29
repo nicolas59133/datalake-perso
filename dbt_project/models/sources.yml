@@ -9,3 +9,17 @@ sources:
         description: Relevés météo journaliers (Open-Meteo), un par date.
       - name: withings_measures
         description: Groupes de mesures corporelles Withings, un par grpid.
+      - name: health_records
+        description: Toutes les mesures Apple Health, brutes, une ligne par enregistrement (type HealthKit + valeur).
+      - name: health_workouts
+        description: Séances de sport Apple Health.
+      - name: health_activity_summary
+        description: Anneaux d'activité Apple Health, un par jour.
+      - name: google_health_steps
+        description: Pas comptés par la Fitbit Air (Google Health API), par intervalle.
+      - name: google_health_heart_rate
+        description: Fréquence cardiaque instantanée (Google Health API).
+      - name: google_health_sleep
+        description: Sessions de sommeil (Google Health API).
+      - name: google_health_weight
+        description: Mesures de poids (Google Health API).

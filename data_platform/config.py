@@ -37,5 +37,24 @@ WITHINGS_TOKEN_PATH = os.getenv(
     "WITHINGS_TOKEN_PATH", str(ROOT / "data" / "withings_token.json")
 )
 
+# --- Source Apple Health ---
+# Pas d'API : export manuel depuis l'app Santé (profil -> Exporter toutes les
+# données de santé) -> zip contenant export.xml -> à décompresser ici. Voir
+# APPLE_HEALTH.md. Chaque nouvel export déposé remplace le précédent ; le
+# `merge` dlt (voir ingestion/apple_health.py) dédoublonne sur les runs.
+APPLE_HEALTH_EXPORT_PATH = os.getenv(
+    "APPLE_HEALTH_EXPORT_PATH", str(ROOT / "data" / "apple_health_export" / "export.xml")
+)
+
+# --- Source Google Health (Fitbit Air) ---
+# OAuth2 standard Google (contrairement à Withings, pas de signature HMAC).
+# Voir GOOGLE_HEALTH.md pour créer le client OAuth (Google Cloud Console).
+GOOGLE_HEALTH_CLIENT_ID = os.getenv("GOOGLE_HEALTH_CLIENT_ID", "")
+GOOGLE_HEALTH_CLIENT_SECRET = os.getenv("GOOGLE_HEALTH_CLIENT_SECRET", "")
+GOOGLE_HEALTH_REDIRECT_URI = os.getenv("GOOGLE_HEALTH_REDIRECT_URI", "http://localhost:3000")
+GOOGLE_HEALTH_TOKEN_PATH = os.getenv(
+    "GOOGLE_HEALTH_TOKEN_PATH", str(ROOT / "data" / "google_health_token.json")
+)
+
 # On s'assure que le dossier data/ existe.
 Path(DUCKDB_PATH).parent.mkdir(parents=True, exist_ok=True)

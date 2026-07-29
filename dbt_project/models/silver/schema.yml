@@ -19,3 +19,35 @@ models:
       - name: date
         data_tests:
           - not_null
+
+  - name: health_daily
+    description: Apple Health pivoté par jour (pas, distance, fréquence cardiaque, sommeil).
+    columns:
+      - name: date
+        data_tests:
+          - unique
+          - not_null
+
+  - name: health_workouts
+    description: Séances de sport Apple Health, durée dérivée des timestamps.
+    columns:
+      - name: workout_id
+        data_tests:
+          - unique
+          - not_null
+
+  - name: health_activity_summary
+    description: Anneaux d'activité Apple Health (énergie, exercice, debout), un par jour.
+    columns:
+      - name: date
+        data_tests:
+          - unique
+          - not_null
+
+  - name: google_health_daily
+    description: Fitbit Air / Google Health pivoté par jour (pas, fréquence cardiaque, sommeil, poids).
+    columns:
+      - name: date
+        data_tests:
+          - unique
+          - not_null
