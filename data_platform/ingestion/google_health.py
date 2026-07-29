@@ -18,6 +18,7 @@ patron de list_data_points()/parse_xxx() ci-dessous une fois le schéma exact
 vérifié (la doc publique ne détaillait pas tous les types au moment où ce
 connecteur a été écrit).
 """
+import hashlib
 import json
 
 import dlt
@@ -52,6 +53,19 @@ def _to_float(value):
 def _to_int(value):
     f = _to_float(value)
     return int(f) if f is not None else None
+
+
+def _data_point_id(dp: dict, *fallback_fields) -> str:
+    """Certains types (steps, heart-rate observés en pratique) n'ont PAS de
+    `dataPoint["name"]` contrairement à ce que laissait supposer l'exemple
+    "exercise" de la doc publique — seuls sleep/weight en ont un dans les
+    tests réels. Fallback : hash déterministe des champs fournis, même
+    patron que record_id/workout_id dans apple_health.py."""
+    name = dp.get("name")
+    if name:
+        return name
+    key = "|".join(str(f) for f in fallback_fields)
+    return hashlib.sha1(key.encode()).hexdigest()
 
 
 def _offset_seconds(value):
@@ -118,14 +132,24 @@ def get_valid_access_token() -> str:
     return fresh["access_token"]
 
 
-def list_data_points(access_token: str, data_type: str) -> list[dict]:
-    """Récupère TOUS les dataPoints d'un type (pagination via nextPageToken).
-    Pas de filtre de date : comme pour la météo, on retélécharge tout et le
-    `merge` dlt dédoublonne (dataPoint["name"] est un ID stable côté Google,
-    contrairement à Apple Health)."""
+def list_data_points(access_token: str, data_type: str, max_pages: int | None = None) -> list[dict]:
+    """Récupère les dataPoints d'un type (pagination via nextPageToken).
+    Pas de filtre de date côté requête (non confirmé par type dans la doc
+    publique au moment de l'écriture) : comme pour la météo, on retélécharge
+    tout et le `merge` dlt dédoublonne (dataPoint["name"] est un ID stable
+    côté Google, contrairement à Apple Health).
+
+    `max_pages` : garde-fou pour les types à très haut débit (heart-rate
+    échantillonné en continu peut dépasser 500k points/mois -> des dizaines
+    de minutes de pagination). Si atteint, log un avertissement clair (pas de
+    troncature silencieuse) plutôt que de tout retélécharger à chaque run.
+    TODO : remplacer par un vrai filtre de date côté requête une fois son
+    champ exact confirmé par type (voir GOOGLE_HEALTH.md)."""
     points: list[dict] = []
     page_token = None
+    pages = 0
     while True:
+        pages += 1
         params = {"pageSize": 1000}
         if page_token:
             params["pageToken"] = page_token
@@ -141,6 +165,13 @@ def list_data_points(access_token: str, data_type: str) -> list[dict]:
         page_token = body.get("nextPageToken")
         if not page_token:
             break
+        if max_pages is not None and pages >= max_pages:
+            print(
+                f"[google_health] ATTENTION : {data_type} plafonné à {pages} pages "
+                f"({len(points)} points) — il reste des données non chargées. "
+                "Voir GOOGLE_HEALTH.md (filtre de date à ajouter)."
+            )
+            break
     return points
 
 
@@ -151,7 +182,9 @@ def parse_steps(data_points: list[dict]) -> list[dict]:
         interval = steps.get("interval", {})
         rows.append(
             {
-                "data_point_id": dp.get("name"),
+                "data_point_id": _data_point_id(
+                    dp, "steps", interval.get("startTime"), interval.get("endTime"), steps.get("count")
+                ),
                 "platform": (dp.get("dataSource") or {}).get("platform"),
                 "start_time": interval.get("startTime"),
                 "start_utc_offset_s": _offset_seconds(interval.get("startUtcOffset")),
@@ -169,7 +202,9 @@ def parse_heart_rate(data_points: list[dict]) -> list[dict]:
         sample_time = hr.get("sampleTime") or {}
         rows.append(
             {
-                "data_point_id": dp.get("name"),
+                "data_point_id": _data_point_id(
+                    dp, "heart-rate", sample_time.get("physicalTime"), hr.get("beatsPerMinute")
+                ),
                 "platform": (dp.get("dataSource") or {}).get("platform"),
                 "sample_time": sample_time.get("physicalTime"),
                 "sample_utc_offset_s": _offset_seconds(sample_time.get("utcOffset")),
@@ -187,7 +222,7 @@ def parse_sleep(data_points: list[dict]) -> list[dict]:
         summary = sleep.get("summary", {})
         rows.append(
             {
-                "data_point_id": dp.get("name"),
+                "data_point_id": _data_point_id(dp, "sleep", interval.get("startTime"), interval.get("endTime")),
                 "platform": (dp.get("dataSource") or {}).get("platform"),
                 "start_time": interval.get("startTime"),
                 "start_utc_offset_s": _offset_seconds(interval.get("startUtcOffset")),
@@ -208,7 +243,7 @@ def parse_weight(data_points: list[dict]) -> list[dict]:
         sample_time = w.get("sampleTime") or {}
         rows.append(
             {
-                "data_point_id": dp.get("name"),
+                "data_point_id": _data_point_id(dp, "weight", sample_time.get("physicalTime"), grams),
                 "platform": (dp.get("dataSource") or {}).get("platform"),
                 "sample_time": sample_time.get("physicalTime"),
                 "sample_utc_offset_s": _offset_seconds(sample_time.get("utcOffset")),
@@ -230,7 +265,9 @@ def google_health_resources():
             primary_key="data_point_id",
         ),
         dlt.resource(
-            parse_heart_rate(list_data_points(access_token, "heart-rate")),
+            # heart-rate est échantillonné en continu (500k+ points/mois vus en
+            # test) -> plafond temporaire, voir docstring de list_data_points.
+            parse_heart_rate(list_data_points(access_token, "heart-rate", max_pages=30)),
             name="google_health_heart_rate",
             write_disposition="merge",
             primary_key="data_point_id",

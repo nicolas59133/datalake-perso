@@ -57,16 +57,34 @@ Sur http://localhost:3000 → matérialise les assets `bronze/google_health_*`
 
 ## Ce qui est chargé (v1)
 
-4 types de données, ceux dont Google documente le schéma exact publiquement
-au moment où ce connecteur a été écrit : **pas**, **fréquence cardiaque**,
-**sommeil**, **poids**. Google Health en expose une quinzaine au total
-(distance, SpO2, VO2 max, HRV, glycémie...) — pour en ajouter un, complète
+4 types de données : **pas**, **fréquence cardiaque**, **sommeil**, **poids**.
+Testé contre un vrai compte (Fitbit Air) le 2026-07-29 :
+
+- `steps` et `heart-rate` n'ont **pas** de champ `dataPoint["name"]` en
+  pratique, contrairement à l'exemple "exercise" de la doc publique (seuls
+  `sleep`/`weight` en ont un) — `google_health.py::_data_point_id()` gère un
+  fallback (hash déterministe des champs pertinents) pour ces deux types.
+- `weight` peut provenir d'une balance Withings synchronisée dans Google
+  Health (`dataSource.platform = "HEALTH_KIT"`, `device.manufacturer =
+  "Withings"`) — mêmes valeurs que dans `bronze.withings_measures`, donc
+  doublon entre les deux sources si tu as les deux actives (pas dédoublonné
+  automatiquement entre sources différentes, seulement au sein d'une même
+  source via `merge`).
+- `heart-rate` est échantillonné en continu (**~500k points vus pour 1 seul
+  mois** d'usage, un point toutes les ~5s) : le connecteur plafonne à 30 pages
+  (30 000 points, environ les ~1-2 derniers jours) via `max_pages` dans
+  `list_data_points()`. **TODO non fait** : un vrai filtre de date côté
+  requête pour ne récupérer que les nouveaux points à chaque run, au lieu de
+  retélécharger/re-plafonner à l'identique à chaque fois. En attendant,
+  l'historique FC au-delà de ce plafond n'est pas chargé.
+
+Google Health expose une quinzaine de types au total (distance, SpO2, VO2
+max, HRV, glycémie...) — pour en ajouter un, complète
 `data_platform/ingestion/google_health.py` (une fonction `parse_xxx()` +
-l'entrée dans `google_health_resources()`) une fois son schéma JSON exact
-vérifié sur un vrai appel API (`data_platform/ingestion/google_health.py`
-n'a jamais été testé contre un vrai compte, seulement contre les exemples de
-la doc officielle — si un type casse au premier run, regarde la structure
-JSON réelle renvoyée et ajuste `parse_xxx()` en conséquence).
+l'entrée dans `google_health_resources()`) après avoir vérifié son schéma
+JSON réel (fais un appel direct comme dans l'historique de debug plutôt que
+de te fier à la doc publique, qui s'est révélée incomplète/imprécise sur le
+champ `name`).
 
 ## En cas de souci
 
@@ -77,3 +95,9 @@ JSON réelle renvoyée et ajuste `parse_xxx()` en conséquence).
   puis relance `scripts/google_health_auth.py`.
 - Contrairement à Withings, le refresh_token Google ne tourne pas à chaque
   usage — pas besoin de le re-sauvegarder à chaque run.
+- Si un run échoue (`UnboundColumnException` ou autre), dlt garde le paquet
+  extrait en attente et le **rejoue tel quel** au prochain run — donc si tu as
+  corrigé le code entre-temps, ça ne suffit pas, le bug réapparaît à
+  l'identique. `dlt pipeline google_health drop-pending-packages` ne l'a pas
+  vidé de façon fiable en pratique ; le plus sûr est de supprimer directement
+  `rm -rf ~/.dlt/pipelines/google_health` avant de relancer.

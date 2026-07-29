@@ -146,13 +146,22 @@ les runs Dagster — voir "Contrainte : DuckDB n'autorise qu'un seul writer".
   `accounts.google.com`, token `oauth2.googleapis.com`, contrairement au HMAC
   maison de Withings). `google_health_resources()` récupère UN access_token
   et l'utilise pour les 4 appels API (steps/heart-rate/sleep/weight), pas un
-  refresh par type. Pas de filtre de date côté requête : comme la météo, on
-  retélécharge tout à chaque run et le `merge` dlt (sur `dataPoint["name"]`,
-  un ID stable côté Google — pas besoin de hash synthétique ici,
-  contrairement à Apple Health) dédoublonne. **Schémas `parse_xxx()` non
-  vérifiés contre un vrai compte** (construits à partir de la doc publique
-  Google, jamais testés en conditions réelles) — voir GOOGLE_HEALTH.md si un
-  type de donnée renvoie des colonnes vides après le premier run réel.
+  refresh par type. Testé contre un vrai compte (Fitbit Air) le 2026-07-29 :
+  contrairement à ce que suggérait l'exemple "exercise" de la doc publique,
+  `steps` et `heart-rate` n'ont **pas** de `dataPoint["name"]` en pratique
+  (seuls `sleep`/`weight` en ont un) -> `_data_point_id()` retombe sur un
+  hash déterministe pour ces deux types, même patron que
+  record_id/workout_id dans apple_health.py. `heart-rate` est échantillonné
+  en continu (~500k points/mois vus en test) -> `list_data_points()` accepte
+  un `max_pages` (30 pages/30k points utilisé pour heart-rate dans
+  `google_health_resources()`) pour éviter un run de plusieurs dizaines de
+  minutes ; TODO non fait : vrai filtre de date côté requête pour de
+  l'incrémental propre plutôt qu'un plafond arbitraire. Piège dlt rencontré :
+  si un run échoue, dlt rejoue le paquet extrait tel quel au run suivant
+  **même si le code a été corrigé entre-temps** —
+  `rm -rf ~/.dlt/pipelines/google_health` avant de relancer si ça arrive
+  (`dlt pipeline <name> drop-pending-packages` ne l'a pas vidé de façon
+  fiable en pratique).
 
 ### Contrainte : Python 3.14 vs écosystème dbt
 
