@@ -203,17 +203,30 @@ ou les deps dbt :
 
 ### Contrainte : DuckDB n'autorise qu'un seul writer
 
-Les assets bronze n'ont pas de dépendance entre eux, donc Dagster peut vouloir
-les exécuter en parallèle — ce qui produit `IO Error: Could not set lock on
-file datalake.duckdb` puisque DuckDB refuse les écritures concurrentes sur le
-même fichier (même souci pour le subprocess `dbt build` de `silver.py` s'il
-tournait en même temps qu'un asset bronze). Le job `refresh_all`
-(`definitions.py`) fixe donc `executor_def=dg.in_process_executor` pour
-forcer une exécution séquentielle. Piège : `dagster asset materialize
---select "..."` construit un job éphémère qui **ignore cet executor_def** et
-retombe sur le multiprocess executor par défaut — la collision reste donc
-possible par ce chemin (`scripts/refresh.sh` utilise donc `dagster job
-execute -j refresh_all`, pas `asset materialize`).
+Deux couches de protection, car une seule ne suffisait pas en pratique :
+
+1. Le job `refresh_all` (`definitions.py`) fixe `executor_def=
+   dg.in_process_executor` pour forcer une exécution séquentielle — mais
+   **insuffisant seul** : le bouton "Materialize all" de l'UI Dagster et
+   `dagster asset materialize --select "..."` construisent un job éphémère
+   qui **ignore cet executor_def** et retombe sur le multiprocess executor
+   par défaut (vécu en pratique : lock conflict déclenché via le bouton UI
+   après plusieurs runs sans souci en CLI `job execute`).
+2. **Dépendances d'ordre pures** (`deps=[...]` sans lien de données réel)
+   entre TOUS les assets bronze (`weather_daily` -> `withings_measures` ->
+   `google_health_*` -> `health_*`), et entre les deux groupes silver
+   (`silver_dbt_models_apple_health` dépend aussi de `silver/weather_daily`).
+   Comme Dagster respecte le graphe de dépendances quel que soit l'executor,
+   ça élimine la collision **peu importe comment la matérialisation est
+   déclenchée** (bouton UI, CLI, job nommé, schedule) — contrairement à (1)
+   seul. `scripts/refresh.sh` utilise quand même `dagster job execute
+   -j refresh_all` (pas `asset materialize`) par prudence/cohérence, mais
+   n'est plus le seul rempart.
+
+Même logique côté dbt : deux `dbt build` (subprocess séparés) qui
+tourneraient en parallèle auraient le même problème — d'où la dépendance
+d'ordre entre `silver_dbt_models_core` et `silver_dbt_models_apple_health`
+en plus de leur séparation fonctionnelle (voir plus haut).
 
 Autre source de collision, définitivement réglée : l'UI DuckDB locale
 (`scripts/duckdb_ui.py`) ouvre une connexion persistante — testé empiriquement

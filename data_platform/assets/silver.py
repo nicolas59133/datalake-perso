@@ -97,7 +97,11 @@ APPLE_HEALTH_SILVER_SPECS = [
         key=["silver", "health_daily"],
         group_name="silver",
         kinds={"dbt", "duckdb"},
-        deps=[dg.AssetKey(["bronze", "health_records"])],
+        # + dép. purement ordinale vers le groupe core : deux `dbt build`
+        # distincts (subprocess séparés) écrivant sur le même fichier DuckDB
+        # en parallèle provoqueraient le même lock conflict que les assets
+        # bronze — voir le commentaire équivalent dans bronze.py.
+        deps=[dg.AssetKey(["bronze", "health_records"]), dg.AssetKey(["silver", "weather_daily"])],
         description="Apple Health pivoté par jour : pas, distance, fréquence cardiaque, sommeil (modèle dbt : dbt_project/models/silver/health_daily.sql).",
     ),
     dg.AssetSpec(

@@ -57,6 +57,13 @@ def bronze_weather_daily(context: dg.AssetExecutionContext) -> dg.MaterializeRes
     key=["bronze", "withings_measures"],
     group_name="bronze",
     kinds={"dlt", "duckdb"},
+    # Dépendance purement ordinale (pas de lien de données) : force ce step
+    # après bronze_weather_daily quelle que soit la façon dont on déclenche
+    # la matérialisation (bouton "Materialize all", CLI --select "*"...), qui
+    # peut ignorer l'executor_def séquentiel de refresh_all. Sans ordre
+    # explicite entre assets bronze, Dagster peut les paralléliser -> lock
+    # DuckDB conflict (un seul writer à la fois). Voir CLAUDE.md.
+    deps=[dg.AssetKey(["bronze", "weather_daily"])],
     description="Mesures corporelles Withings (poids, masse grasse, tension, pouls…).",
 )
 def bronze_withings_measures(context: dg.AssetExecutionContext) -> dg.MaterializeResult:
@@ -81,18 +88,22 @@ APPLE_HEALTH_SPECS = [
         key=["bronze", "health_records"],
         group_name="bronze",
         kinds={"dlt", "duckdb"},
+        # Ordre forcé après google_health (voir commentaire sur withings_measures).
+        deps=[dg.AssetKey(["bronze", "google_health_steps"])],
         description="Toutes les mesures Apple Health, brutes (pas, fréquence cardiaque, sommeil, tension…), une ligne par enregistrement.",
     ),
     dg.AssetSpec(
         key=["bronze", "health_workouts"],
         group_name="bronze",
         kinds={"dlt", "duckdb"},
+        deps=[dg.AssetKey(["bronze", "google_health_steps"])],
         description="Séances de sport Apple Health (type, distance, énergie brûlée).",
     ),
     dg.AssetSpec(
         key=["bronze", "health_activity_summary"],
         group_name="bronze",
         kinds={"dlt", "duckdb"},
+        deps=[dg.AssetKey(["bronze", "google_health_steps"])],
         description="Anneaux d'activité Apple Health, un par jour (énergie, exercice, debout).",
     ),
 ]
@@ -131,6 +142,7 @@ GOOGLE_HEALTH_SPECS = [
         key=["bronze", "google_health_steps"],
         group_name="bronze",
         kinds={"dlt", "duckdb"},
+        deps=[dg.AssetKey(["bronze", "withings_measures"])],
         description="Pas comptés par la Fitbit Air (Google Health API), par intervalle.",
     ),
     dg.AssetSpec(
