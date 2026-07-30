@@ -58,7 +58,7 @@ Sur http://localhost:3000 → matérialise les assets `bronze/google_health_*`
 ## Ce qui est chargé (v1)
 
 4 types de données : **pas**, **fréquence cardiaque**, **sommeil**, **poids**.
-Testé contre un vrai compte (Fitbit Air) le 2026-07-29 :
+Testé contre un vrai compte (Fitbit Air) les 2026-07-29/30 :
 
 - `steps` et `heart-rate` n'ont **pas** de champ `dataPoint["name"]` en
   pratique, contrairement à l'exemple "exercise" de la doc publique (seuls
@@ -71,12 +71,14 @@ Testé contre un vrai compte (Fitbit Air) le 2026-07-29 :
   automatiquement entre sources différentes, seulement au sein d'une même
   source via `merge`).
 - `heart-rate` est échantillonné en continu (**~500k points vus pour 1 seul
-  mois** d'usage, un point toutes les ~5s) : le connecteur plafonne à 30 pages
-  (30 000 points, environ les ~1-2 derniers jours) via `max_pages` dans
-  `list_data_points()`. **TODO non fait** : un vrai filtre de date côté
-  requête pour ne récupérer que les nouveaux points à chaque run, au lieu de
-  retélécharger/re-plafonner à l'identique à chaque fois. En attendant,
-  l'historique FC au-delà de ce plafond n'est pas chargé.
+  mois** d'usage, un point toutes les ~5s) — bien trop volumineux pour tout
+  charger en brut. Le connecteur utilise l'endpoint serveur
+  `dataPoints:dailyRollUp` (agrégats journaliers avg/min/max calculés côté
+  API), qui ne renvoie qu'une poignée de lignes au lieu de centaines de
+  milliers. Bronze : `bronze.google_health_heart_rate_daily` (une ligne par
+  jour), sur les 90 derniers jours par défaut
+  (`HEART_RATE_LOOKBACK_DAYS` dans `google_health.py`). L'historique
+  intraday brut (heure par heure) n'est pas conservé.
 
 Google Health expose une quinzaine de types au total (distance, SpO2, VO2
 max, HRV, glycémie...) — pour en ajouter un, complète
@@ -84,7 +86,9 @@ max, HRV, glycémie...) — pour en ajouter un, complète
 l'entrée dans `google_health_resources()`) après avoir vérifié son schéma
 JSON réel (fais un appel direct comme dans l'historique de debug plutôt que
 de te fier à la doc publique, qui s'est révélée incomplète/imprécise sur le
-champ `name`).
+champ `name`). Si le type est aussi à haut débit, regarde d'abord s'il
+supporte `dataPoints:dailyRollUp` (même patron que heart-rate) avant de
+paginer les points bruts.
 
 ## En cas de souci
 

@@ -134,10 +134,10 @@ GOOGLE_HEALTH_SPECS = [
         description="Pas comptés par la Fitbit Air (Google Health API), par intervalle.",
     ),
     dg.AssetSpec(
-        key=["bronze", "google_health_heart_rate"],
+        key=["bronze", "google_health_heart_rate_daily"],
         group_name="bronze",
         kinds={"dlt", "duckdb"},
-        description="Fréquence cardiaque instantanée (Google Health API).",
+        description="Fréquence cardiaque agrégée par jour (avg/min/max), endpoint dailyRollUp (Google Health API) — pas les points bruts, échantillonnés en continu (~500k/mois).",
     ),
     dg.AssetSpec(
         key=["bronze", "google_health_sleep"],
@@ -167,7 +167,7 @@ def bronze_google_health(context: dg.AssetExecutionContext):
 
     counts = {
         "google_health_steps": _count("bronze.google_health_steps"),
-        "google_health_heart_rate": _count("bronze.google_health_heart_rate"),
+        "google_health_heart_rate_daily": _count("bronze.google_health_heart_rate_daily"),
         "google_health_sleep": _count("bronze.google_health_sleep"),
         "google_health_weight": _count("bronze.google_health_weight"),
     }

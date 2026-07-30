@@ -4,10 +4,16 @@ dagster-dbt (l'intégration officielle, qui génère un asset par modèle à par
 du manifest dbt) n'est pas installable ici : sa dernière version épingle
 dagster==1.12.8, qui ne supporte pas Python 3.14 (le seul Python présent sur
 cette machine — voir CLAUDE.md). En attendant une release dagster-dbt
-compatible, on appelle `dbt build` en subprocess depuis un `@dg.multi_asset`
-qui déclare à la main un noeud par modèle dbt, avec ses dépendances vers les
-assets bronze correspondants — même niveau de granularité dans l'UI Dagster,
-sans la génération automatique.
+compatible, on appelle `dbt build` en subprocess depuis des `@dg.multi_asset`
+qui déclarent à la main un noeud par modèle dbt, avec leurs dépendances vers
+les assets bronze correspondants — même niveau de granularité dans l'UI
+Dagster, sans la génération automatique.
+
+Deux groupes SÉPARÉS plutôt qu'un seul multi_asset pour tout : un
+`@dg.multi_asset` est tout-ou-rien (un `dbt build` qui échoue sur UN modèle
+fait échouer TOUT le step Dagster, y compris les modèles qui ont réellement
+réussi côté DB). Tant qu'Apple Health n'est pas configuré (bronze absent),
+son groupe échoue sans jamais impacter météo/Withings/Google Health.
 """
 import os
 import shutil
@@ -24,7 +30,30 @@ DBT_PROJECT_DIR = ROOT / "dbt_project"
 DBT_BIN = str(Path(sys.executable).parent / "dbt")
 
 
-SILVER_SPECS = [
+def _dbt_build(context: dg.AssetExecutionContext, *model_names: str) -> None:
+    result = subprocess.run(
+        [
+            DBT_BIN,
+            "build",
+            "--project-dir",
+            str(DBT_PROJECT_DIR),
+            "--profiles-dir",
+            str(DBT_PROJECT_DIR),
+            "--select",
+            *model_names,
+        ],
+        cwd=ROOT,
+        env={**os.environ, "DUCKDB_PATH": DUCKDB_PATH},
+        capture_output=True,
+        text=True,
+    )
+    context.log.info(result.stdout)
+    if result.returncode != 0:
+        context.log.error(result.stderr)
+        raise RuntimeError(f"dbt build a échoué (code {result.returncode})")
+
+
+CORE_SILVER_SPECS = [
     dg.AssetSpec(
         key=["silver", "weather_daily"],
         group_name="silver",
@@ -39,6 +68,31 @@ SILVER_SPECS = [
         deps=[dg.AssetKey(["bronze", "withings_measures"])],
         description="Mesures Withings nettoyées (modèle dbt : dbt_project/models/silver/withings_measures.sql).",
     ),
+    dg.AssetSpec(
+        key=["silver", "google_health_daily"],
+        group_name="silver",
+        kinds={"dbt", "duckdb"},
+        deps=[
+            dg.AssetKey(["bronze", "google_health_steps"]),
+            dg.AssetKey(["bronze", "google_health_heart_rate_daily"]),
+            dg.AssetKey(["bronze", "google_health_sleep"]),
+            dg.AssetKey(["bronze", "google_health_weight"]),
+        ],
+        description="Fitbit Air / Google Health pivoté par jour (modèle dbt : dbt_project/models/silver/google_health_daily.sql).",
+    ),
+]
+
+
+@dg.multi_asset(specs=CORE_SILVER_SPECS)
+def silver_dbt_models_core(context: dg.AssetExecutionContext):
+    """Sources fiables (pas d'export manuel requis). Groupe séparé
+    d'Apple Health pour ne jamais être bloqué par son absence/échec."""
+    _dbt_build(context, "weather_daily", "withings_measures", "google_health_daily")
+    for spec in CORE_SILVER_SPECS:
+        yield dg.MaterializeResult(asset_key=spec.key)
+
+
+APPLE_HEALTH_SILVER_SPECS = [
     dg.AssetSpec(
         key=["silver", "health_daily"],
         group_name="silver",
@@ -60,43 +114,15 @@ SILVER_SPECS = [
         deps=[dg.AssetKey(["bronze", "health_activity_summary"])],
         description="Anneaux d'activité Apple Health nettoyés (modèle dbt : dbt_project/models/silver/health_activity_summary.sql).",
     ),
-    dg.AssetSpec(
-        key=["silver", "google_health_daily"],
-        group_name="silver",
-        kinds={"dbt", "duckdb"},
-        deps=[
-            dg.AssetKey(["bronze", "google_health_steps"]),
-            dg.AssetKey(["bronze", "google_health_heart_rate"]),
-            dg.AssetKey(["bronze", "google_health_sleep"]),
-            dg.AssetKey(["bronze", "google_health_weight"]),
-        ],
-        description="Fitbit Air / Google Health pivoté par jour (modèle dbt : dbt_project/models/silver/google_health_daily.sql).",
-    ),
 ]
 
 
-@dg.multi_asset(specs=SILVER_SPECS)
-def silver_dbt_models(context: dg.AssetExecutionContext):
-    result = subprocess.run(
-        [
-            DBT_BIN,
-            "build",
-            "--project-dir",
-            str(DBT_PROJECT_DIR),
-            "--profiles-dir",
-            str(DBT_PROJECT_DIR),
-        ],
-        cwd=ROOT,
-        env={**os.environ, "DUCKDB_PATH": DUCKDB_PATH},
-        capture_output=True,
-        text=True,
-    )
-    context.log.info(result.stdout)
-    if result.returncode != 0:
-        context.log.error(result.stderr)
-        raise RuntimeError(f"dbt build a échoué (code {result.returncode})")
-
-    for spec in SILVER_SPECS:
+@dg.multi_asset(specs=APPLE_HEALTH_SILVER_SPECS)
+def silver_dbt_models_apple_health(context: dg.AssetExecutionContext):
+    """Échoue tant que data/apple_health_export/export.xml n'est pas déposé
+    (voir APPLE_HEALTH.md) — sans effet sur silver_dbt_models_core."""
+    _dbt_build(context, "health_daily", "health_workouts", "health_activity_summary")
+    for spec in APPLE_HEALTH_SILVER_SPECS:
         yield dg.MaterializeResult(asset_key=spec.key)
 
 
@@ -104,12 +130,13 @@ def silver_dbt_models(context: dg.AssetExecutionContext):
     key=["ops", "duckdb_view_snapshot"],
     group_name="ops",
     kinds={"duckdb"},
-    deps=[spec.key for spec in SILVER_SPECS],
+    deps=[spec.key for spec in CORE_SILVER_SPECS],
     description=(
         "Copie de data/datalake.duckdb dédiée à scripts/duckdb_ui.py. DuckDB "
         "n'autorise qu'un writer/lecteur à la fois par fichier ; sans cette "
         "copie séparée, garder l'UI ouverte ferait échouer tout run Dagster "
-        "avec un lock conflict."
+        "avec un lock conflict. Dépend seulement du groupe silver fiable (pas "
+        "Apple Health) pour toujours tourner même si celui-ci échoue."
     ),
 )
 def refresh_view_snapshot(context: dg.AssetExecutionContext) -> dg.MaterializeResult:

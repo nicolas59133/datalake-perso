@@ -159,22 +159,73 @@ def test_google_health_parse_steps():
     assert rows[0]["start_utc_offset_s"] == 3600
 
 
-def test_google_health_parse_heart_rate_and_weight():
-    from data_platform.ingestion.google_health import parse_heart_rate, parse_weight
+def test_google_health_parse_steps_without_name():
+    """En pratique (compte réel testé le 2026-07-29), les dataPoints steps
+    n'ont PAS de champ "name" malgré l'exemple "exercise" de la doc
+    publique -> fallback hash déterministe."""
+    from data_platform.ingestion.google_health import parse_steps
 
-    hr_points = [
+    data_points = [
         {
-            "name": "p2",
             "dataSource": {"platform": "FITBIT"},
-            "heartRate": {
-                "sampleTime": {"physicalTime": "2026-01-01T09:00:00Z", "utcOffset": "-18000s"},
-                "beatsPerMinute": "62",
+            "steps": {
+                "interval": {"startTime": "2026-01-01T07:00:00Z", "endTime": "2026-01-01T08:00:00Z"},
+                "count": "26",
             },
         }
     ]
-    rows = parse_heart_rate(hr_points)
-    assert rows[0]["beats_per_minute"] == 62
-    assert rows[0]["sample_utc_offset_s"] == -18000
+    rows = parse_steps(data_points)
+    assert rows[0]["data_point_id"]
+    assert rows[0]["count"] == 26
+
+
+def test_google_health_parse_heart_rate_daily():
+    from data_platform.ingestion.google_health import parse_heart_rate_daily
+
+    rollup_points = [
+        {
+            "civilStartTime": {"date": {"year": 2026, "month": 7, "day": 29}},
+            "civilEndTime": {"date": {"year": 2026, "month": 7, "day": 30}},
+            "heartRate": {
+                "beatsPerMinuteAvg": 69.65212104463176,
+                "beatsPerMinuteMax": 122,
+                "beatsPerMinuteMin": 45,
+            },
+        }
+    ]
+    rows = parse_heart_rate_daily(rollup_points)
+    assert rows[0]["date"] == "2026-07-29"
+    assert rows[0]["avg_bpm"] == 69.65212104463176
+    assert rows[0]["min_bpm"] == 45
+    assert rows[0]["max_bpm"] == 122
+
+
+def test_google_health_daily_rollup_chunking():
+    """list_daily_rollup doit découper une plage > chunk_days en plusieurs
+    requêtes (heart-rate plafonne à 14 jours côté API)."""
+    from datetime import date
+    from unittest.mock import patch, MagicMock
+    from data_platform.ingestion.google_health import list_daily_rollup
+
+    calls = []
+
+    def fake_post(url, json, headers, timeout):
+        calls.append((json["range"]["start"]["date"], json["range"]["end"]["date"]))
+        resp = MagicMock()
+        resp.json.return_value = {"rollupDataPoints": [{"civilStartTime": {"date": json["range"]["start"]["date"]}}]}
+        resp.raise_for_status.return_value = None
+        return resp
+
+    with patch("data_platform.ingestion.google_health.requests.post", side_effect=fake_post):
+        points = list_daily_rollup(
+            "token", "heart-rate", date(2026, 6, 1), date(2026, 7, 30), chunk_days=14
+        )
+    assert len(calls) == 5  # 59 jours / 14 -> 5 requêtes (14+14+14+14+3)
+    assert len(points) == 5
+
+
+def test_google_health_parse_weight():
+    from data_platform.ingestion.google_health import parse_weight
 
     weight_points = [
         {

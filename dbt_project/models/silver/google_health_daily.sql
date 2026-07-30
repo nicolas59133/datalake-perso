@@ -10,13 +10,14 @@ with steps as (
 ),
 
 heart_rate as (
+    -- Déjà agrégée par jour côté API (endpoint dailyRollUp) : pas besoin de
+    -- regrouper ici, une ligne = un jour.
     select
-        cast(cast(sample_time as timestamp) + interval (coalesce(sample_utc_offset_s, 0)) second as date) as date,
-        avg(beats_per_minute) as avg_heart_rate,
-        min(beats_per_minute) as min_heart_rate,
-        max(beats_per_minute) as max_heart_rate
-    from {{ source('bronze', 'google_health_heart_rate') }}
-    group by 1
+        cast(date as date) as date,
+        avg_bpm as avg_heart_rate,
+        min_bpm as min_heart_rate,
+        max_bpm as max_heart_rate
+    from {{ source('bronze', 'google_health_heart_rate_daily') }}
 ),
 
 sleep as (

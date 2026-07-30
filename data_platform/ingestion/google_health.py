@@ -11,15 +11,22 @@ Flux, même patron que withings.py :
     (Google ne fait PAS tourner le refresh_token à chaque usage, contrairement
     à Withings — pas besoin de le re-sauvegarder).
 
-Périmètre v1 : 4 types de données au schéma confirmé dans la doc officielle
-(steps, heart-rate, sleep, weight). Google Health en expose ~15 au total
-(distance, floors, SpO2, VO2 max, glycémie...) ; en ajouter un = répéter le
-patron de list_data_points()/parse_xxx() ci-dessous une fois le schéma exact
-vérifié (la doc publique ne détaillait pas tous les types au moment où ce
-connecteur a été écrit).
+Périmètre v1 : 4 types de données (steps, heart-rate, sleep, weight).
+Google Health en expose ~15 au total (distance, floors, SpO2, VO2 max,
+glycémie...) ; en ajouter un = répéter le patron de
+list_data_points()/parse_xxx() ci-dessous une fois le schéma exact vérifié
+par un appel réel (la doc publique s'est révélée incomplète/imprécise sur
+plusieurs points, voir CLAUDE.md).
+
+heart-rate est échantillonné en continu (~500k points vus pour 1 mois
+d'usage) : au lieu de paginer les points bruts, on utilise l'endpoint
+`dataPoints:dailyRollUp` (agrégation journalière côté serveur — avg/min/max
+BPM par jour), qui ne renvoie qu'une poignée de lignes au lieu de centaines
+de milliers.
 """
 import hashlib
 import json
+from datetime import date, timedelta
 
 import dlt
 import requests
@@ -195,20 +202,58 @@ def parse_steps(data_points: list[dict]) -> list[dict]:
     return rows
 
 
-def parse_heart_rate(data_points: list[dict]) -> list[dict]:
+def _civil_date(d: date) -> dict:
+    return {"date": {"year": d.year, "month": d.month, "day": d.day}}
+
+
+def list_daily_rollup(
+    access_token: str, data_type: str, start_date: date, end_date: date, chunk_days: int = 14
+) -> list[dict]:
+    """Agrégats journaliers côté serveur (`dataPoints:dailyRollUp`) sur
+    `[start_date, end_date)`. Chaque requête est plafonnée à `chunk_days`
+    jours (14 = plafond observé pour heart-rate ; un autre type pourrait
+    avoir un plafond différent, ajuste si `INVALID_ROLLUP_QUERY_DURATION`
+    apparaît dans les logs)."""
+    points: list[dict] = []
+    cursor = start_date
+    while cursor < end_date:
+        chunk_end = min(cursor + timedelta(days=chunk_days), end_date)
+        page_token = None
+        while True:
+            body = {
+                "range": {"start": _civil_date(cursor), "end": _civil_date(chunk_end)},
+                "windowSizeDays": 1,
+            }
+            if page_token:
+                body["pageToken"] = page_token
+            resp = requests.post(
+                f"{API_BASE}/users/me/dataTypes/{data_type}/dataPoints:dailyRollUp",
+                json=body,
+                headers={"Authorization": f"Bearer {access_token}"},
+                timeout=30,
+            )
+            resp.raise_for_status()
+            resp_body = resp.json()
+            points.extend(resp_body.get("rollupDataPoints", []))
+            page_token = resp_body.get("nextPageToken")
+            if not page_token:
+                break
+        cursor = chunk_end
+    return points
+
+
+def parse_heart_rate_daily(rollup_points: list[dict]) -> list[dict]:
     rows = []
-    for dp in data_points:
-        hr = dp.get("heartRate") or {}
-        sample_time = hr.get("sampleTime") or {}
+    for rp in rollup_points:
+        hr = rp.get("heartRate") or {}
+        d = (rp.get("civilStartTime") or {}).get("date") or {}
+        date_str = f"{d['year']:04d}-{d['month']:02d}-{d['day']:02d}" if d else None
         rows.append(
             {
-                "data_point_id": _data_point_id(
-                    dp, "heart-rate", sample_time.get("physicalTime"), hr.get("beatsPerMinute")
-                ),
-                "platform": (dp.get("dataSource") or {}).get("platform"),
-                "sample_time": sample_time.get("physicalTime"),
-                "sample_utc_offset_s": _offset_seconds(sample_time.get("utcOffset")),
-                "beats_per_minute": _to_int(hr.get("beatsPerMinute")),
+                "date": date_str,
+                "avg_bpm": _to_float(hr.get("beatsPerMinuteAvg")),
+                "min_bpm": _to_int(hr.get("beatsPerMinuteMin")),
+                "max_bpm": _to_int(hr.get("beatsPerMinuteMax")),
             }
         )
     return rows
@@ -253,10 +298,17 @@ def parse_weight(data_points: list[dict]) -> list[dict]:
     return rows
 
 
+# Recul par défaut pour l'agrégat quotidien de FC — généreux (l'API ne facture
+# rien par appel), pas besoin d'un réglage fin tant que l'historique tient
+# dans quelques requêtes de chunk_days jours.
+HEART_RATE_LOOKBACK_DAYS = 90
+
+
 def google_health_resources():
     """Renvoie les 4 dlt resources prêtes pour `pipeline.run([...])` — un seul
-    rafraîchissement de token réutilisé pour les 4 appels API."""
+    rafraîchissement de token réutilisé pour les appels API."""
     access_token = get_valid_access_token()
+    today = date.today()
     return [
         dlt.resource(
             parse_steps(list_data_points(access_token, "steps")),
@@ -265,12 +317,17 @@ def google_health_resources():
             primary_key="data_point_id",
         ),
         dlt.resource(
-            # heart-rate est échantillonné en continu (500k+ points/mois vus en
-            # test) -> plafond temporaire, voir docstring de list_data_points.
-            parse_heart_rate(list_data_points(access_token, "heart-rate", max_pages=30)),
-            name="google_health_heart_rate",
+            parse_heart_rate_daily(
+                list_daily_rollup(
+                    access_token,
+                    "heart-rate",
+                    today - timedelta(days=HEART_RATE_LOOKBACK_DAYS),
+                    today + timedelta(days=1),  # end exclusif -> inclut aujourd'hui
+                )
+            ),
+            name="google_health_heart_rate_daily",
             write_disposition="merge",
-            primary_key="data_point_id",
+            primary_key="date",
         ),
         dlt.resource(
             parse_sleep(list_data_points(access_token, "sleep")),
