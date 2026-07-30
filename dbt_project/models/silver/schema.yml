@@ -45,9 +45,17 @@ models:
           - not_null
 
   - name: google_health_daily
-    description: Fitbit Air / Google Health pivoté par jour (pas, fréquence cardiaque, sommeil, poids).
+    description: Fitbit Air / Google Health pivoté par jour (pas, distance, activité, fréquence cardiaque, FC repos, HRV, SpO2, sommeil, poids, masse grasse).
     columns:
       - name: date
+        data_tests:
+          - unique
+          - not_null
+
+  - name: google_health_exercise
+    description: Séances de sport Fitbit Air / Google Health, durée dérivée des timestamps.
+    columns:
+      - name: data_point_id
         data_tests:
           - unique
           - not_null

@@ -23,6 +23,7 @@ from pathlib import Path
 
 import dagster as dg
 
+from data_platform.assets.bronze import _GOOGLE_HEALTH_TABLES
 from data_platform.config import DUCKDB_PATH, DUCKDB_VIEW_PATH, ROOT
 
 DBT_PROJECT_DIR = ROOT / "dbt_project"
@@ -72,13 +73,21 @@ CORE_SILVER_SPECS = [
         key=["silver", "google_health_daily"],
         group_name="silver",
         kinds={"dbt", "duckdb"},
+        # Toutes les tables bronze Google Health SAUF exercise (événements
+        # discrets, pivoté à part dans silver/google_health_exercice.sql).
         deps=[
-            dg.AssetKey(["bronze", "google_health_steps"]),
-            dg.AssetKey(["bronze", "google_health_heart_rate_daily"]),
-            dg.AssetKey(["bronze", "google_health_sleep"]),
-            dg.AssetKey(["bronze", "google_health_weight"]),
+            dg.AssetKey(["bronze", table])
+            for table in _GOOGLE_HEALTH_TABLES
+            if table != "google_health_exercise"
         ],
-        description="Fitbit Air / Google Health pivoté par jour (modèle dbt : dbt_project/models/silver/google_health_daily.sql).",
+        description="Fitbit Air / Google Health pivoté par jour : pas, distance, activité, FC, FC repos, HRV, SpO2, sommeil, poids, masse grasse (modèle dbt : dbt_project/models/silver/google_health_daily.sql).",
+    ),
+    dg.AssetSpec(
+        key=["silver", "google_health_exercise"],
+        group_name="silver",
+        kinds={"dbt", "duckdb"},
+        deps=[dg.AssetKey(["bronze", "google_health_exercise"])],
+        description="Séances de sport Fitbit Air / Google Health nettoyées (modèle dbt : dbt_project/models/silver/google_health_exercise.sql).",
     ),
 ]
 
@@ -87,7 +96,7 @@ CORE_SILVER_SPECS = [
 def silver_dbt_models_core(context: dg.AssetExecutionContext):
     """Sources fiables (pas d'export manuel requis). Groupe séparé
     d'Apple Health pour ne jamais être bloqué par son absence/échec."""
-    _dbt_build(context, "weather_daily", "withings_measures", "google_health_daily")
+    _dbt_build(context, "weather_daily", "withings_measures", "google_health_daily", "google_health_exercise")
     for spec in CORE_SILVER_SPECS:
         yield dg.MaterializeResult(asset_key=spec.key)
 

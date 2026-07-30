@@ -137,39 +137,45 @@ def bronze_apple_health(context: dg.AssetExecutionContext):
         )
 
 
+# table -> description. Une entrée = une table bronze produite par
+# google_health_resources() (data_platform/ingestion/google_health.py) ;
+# les deux listes doivent rester synchronisées (couvert par le test
+# test_google_health_resources_tables_match_bronze_specs).
+_GOOGLE_HEALTH_TABLES = {
+    "google_health_steps": "Pas comptés par intervalle (minute par minute).",
+    "google_health_distance": "Distance parcourue par intervalle (minute par minute).",
+    "google_health_active_zone_minutes": "Minutes en zone cardio active par intervalle, avec la zone (FAT_BURN/CARDIO/PEAK).",
+    "google_health_sedentary_periods": "Périodes sédentaires (intervalles sans valeur, juste début/fin).",
+    "google_health_activity_level": "Niveau d'activité par intervalle (SEDENTARY/LIGHTLY_ACTIVE/MODERATELY_ACTIVE/VERY_ACTIVE).",
+    "google_health_heart_rate_daily": "Fréquence cardiaque agrégée par jour (avg/min/max), endpoint dailyRollUp — pas les points bruts, échantillonnés en continu (~500k/mois).",
+    "google_health_resting_heart_rate_daily": "Fréquence cardiaque au repos, déjà agrégée par jour côté API (type daily-native).",
+    "google_health_hrv_daily": "Variabilité de la fréquence cardiaque, déjà agrégée par jour côté API (type daily-native).",
+    "google_health_oxygen_saturation_daily": "SpO2 (saturation en oxygène), déjà agrégée par jour côté API (type daily-native).",
+    "google_health_sleep": "Sessions de sommeil (stades, minutes endormi/éveillé).",
+    "google_health_weight": "Mesures de poids ponctuelles (parfois synchronisées depuis une balance Withings).",
+    "google_health_body_fat": "Mesures de masse grasse ponctuelles (parfois synchronisées depuis une balance Withings).",
+    "google_health_exercise": "Séances de sport (type, durée, calories, distance, FC moyenne).",
+}
+
 GOOGLE_HEALTH_SPECS = [
     dg.AssetSpec(
-        key=["bronze", "google_health_steps"],
+        key=["bronze", table],
         group_name="bronze",
         kinds={"dlt", "duckdb"},
-        deps=[dg.AssetKey(["bronze", "withings_measures"])],
-        description="Pas comptés par la Fitbit Air (Google Health API), par intervalle.",
-    ),
-    dg.AssetSpec(
-        key=["bronze", "google_health_heart_rate_daily"],
-        group_name="bronze",
-        kinds={"dlt", "duckdb"},
-        description="Fréquence cardiaque agrégée par jour (avg/min/max), endpoint dailyRollUp (Google Health API) — pas les points bruts, échantillonnés en continu (~500k/mois).",
-    ),
-    dg.AssetSpec(
-        key=["bronze", "google_health_sleep"],
-        group_name="bronze",
-        kinds={"dlt", "duckdb"},
-        description="Sessions de sommeil (Google Health API).",
-    ),
-    dg.AssetSpec(
-        key=["bronze", "google_health_weight"],
-        group_name="bronze",
-        kinds={"dlt", "duckdb"},
-        description="Mesures de poids (Google Health API).",
-    ),
+        # Un seul ordre forcé sur le premier (steps) après withings_measures ;
+        # les 12 autres tables du même multi_asset héritent de cet ordre
+        # puisqu'elles partagent le même step Dagster. Voir bronze_withings_measures.
+        deps=[dg.AssetKey(["bronze", "withings_measures"])] if table == "google_health_steps" else [],
+        description=f"{description} (Google Health API)",
+    )
+    for table, description in _GOOGLE_HEALTH_TABLES.items()
 ]
 
 
 @dg.multi_asset(specs=GOOGLE_HEALTH_SPECS)
 def bronze_google_health(context: dg.AssetExecutionContext):
-    """Un seul rafraîchissement de token alimente les 4 appels API (voir
-    google_health_resources()), plutôt que se ré-authentifier 4 fois."""
+    """Un seul rafraîchissement de token alimente tous les appels API (voir
+    google_health_resources()), plutôt que se ré-authentifier par type."""
     pipeline = dlt.pipeline(
         pipeline_name="google_health",
         destination=duckdb_dest(DUCKDB_PATH),
@@ -177,19 +183,14 @@ def bronze_google_health(context: dg.AssetExecutionContext):
     )
     pipeline.run(google_health_resources())
 
-    counts = {
-        "google_health_steps": _count("bronze.google_health_steps"),
-        "google_health_heart_rate_daily": _count("bronze.google_health_heart_rate_daily"),
-        "google_health_sleep": _count("bronze.google_health_sleep"),
-        "google_health_weight": _count("bronze.google_health_weight"),
-    }
-    context.log.info(f"Google Health en bronze : {counts}")
     for spec in GOOGLE_HEALTH_SPECS:
         table = spec.key.path[-1]
+        rows = _count(f"bronze.{table}")
+        context.log.info(f"{table} : {rows} lignes")
         yield dg.MaterializeResult(
             asset_key=spec.key,
             metadata={
-                "lignes": dg.MetadataValue.int(counts[table]),
+                "lignes": dg.MetadataValue.int(rows),
                 "table": dg.MetadataValue.text(f"bronze.{table}"),
             },
         )

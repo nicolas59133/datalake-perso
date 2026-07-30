@@ -122,7 +122,8 @@ les runs Dagster — voir "Contrainte : DuckDB n'autorise qu'un seul writer".
 - `data_platform/assets/silver.py` — **PAS** l'intégration `dagster-dbt`
   (voir contrainte ci-dessous). Deux `@dg.multi_asset` séparés, chacun lançant
   un `dbt build --select <modèles du groupe>` en subprocess : `_core`
-  (weather_daily/withings_measures/google_health_daily, sources fiables) et
+  (weather_daily/withings_measures/google_health_daily/google_health_exercise,
+  sources fiables) et
   `_apple_health` (health_daily/health_workouts/health_activity_summary,
   dépend de l'export manuel). Scindé en deux **exprès** : un seul
   `@dg.multi_asset` est tout-ou-rien (un modèle qui échoue dans le `dbt
@@ -152,12 +153,24 @@ les runs Dagster — voir "Contrainte : DuckDB n'autorise qu'un seul writer".
 - `data_platform/ingestion/google_health.py` — OAuth2 standard (auth
   `accounts.google.com`, token `oauth2.googleapis.com`, contrairement au HMAC
   maison de Withings). `google_health_resources()` récupère UN access_token
-  et l'utilise pour les 4 appels API, pas un refresh par type. Testé contre
-  un vrai compte (Fitbit Air) le 2026-07-29/30 :
-  - Contrairement à ce que suggérait l'exemple "exercise" de la doc publique,
-    `steps` et `heart-rate` n'ont **pas** de `dataPoint["name"]` en pratique
-    (seuls `sleep`/`weight` en ont un) -> `_data_point_id()` retombe sur un
-    hash déterministe pour ces deux types, même patron que
+  et l'utilise pour tous les appels API, pas un refresh par type. **13
+  métriques**, chacune rangée dans une des 5 "formes" (voir docstring en tête
+  du fichier) : interval (`_parse_interval_metric()`), instant
+  (`_parse_instant_metric()`), rollup (`list_daily_rollup()` +
+  `parse_heart_rate_daily()`), daily-native (`_parse_daily_native()`),
+  session (`parse_sleep()`/`parse_exercise()`, écrites à la main — trop
+  spécifiques pour un helper générique). Ajouter une métrique = l'enregistrer
+  dans `_INTERVAL_METRICS`/`_INSTANT_METRICS`/`_DAILY_NATIVE_METRICS` (ou
+  écrire un parseur dédié pour une forme "session") **et** dans
+  `_GOOGLE_HEALTH_TABLES` (`data_platform/assets/bronze.py`, source de
+  vérité pour les `AssetSpec` Dagster) — synchronisation vérifiée par
+  `test_google_health_bronze_specs_match_resources` (tests/test_pipeline.py).
+  Testé contre un vrai compte (Fitbit Air) le 2026-07-29/30, plusieurs
+  écarts trouvés par rapport à la doc publique :
+  - Contrairement à ce que suggérait l'exemple "exercise" de la doc, `steps`
+    et `heart-rate` n'ont **pas** de `dataPoint["name"]` en pratique (seuls
+    `sleep`/`weight`/etc. en ont un) -> `_data_point_id()` retombe sur un
+    hash déterministe pour ces cas, même patron que
     record_id/workout_id dans apple_health.py.
   - `heart-rate` est échantillonné en continu (~500k points/mois vus en
     test) : au lieu de paginer les points bruts (`list_data_points`), on
@@ -169,11 +182,23 @@ les runs Dagster — voir "Contrainte : DuckDB n'autorise qu'un seul writer".
     — un autre type pourrait avoir un plafond différent). Bronze :
     `google_health_heart_rate_daily` (primary_key=`date`), pas
     `google_health_heart_rate`.
+  - `daily-resting-heart-rate`/`daily-oxygen-saturation`/
+    `daily-heart-rate-variability` sont des types "daily-native" — Google
+    renvoie déjà UNE ligne par jour, pas besoin de rollup ni d'agrégation ;
+    découverts en sondant systématiquement les dataTypes candidats plutôt
+    qu'en devinant depuis la doc (voir historique de session).
   - Piège dlt rencontré : si un run échoue, dlt rejoue le paquet extrait tel
     quel au run suivant **même si le code a été corrigé entre-temps** —
     `rm -rf ~/.dlt/pipelines/google_health` avant de relancer si ça arrive
     (`dlt pipeline <name> drop-pending-packages` ne l'a pas vidé de façon
     fiable en pratique).
+  - `data_platform/assets/silver.py` importe `_GOOGLE_HEALTH_TABLES` depuis
+    `assets/bronze.py` pour construire les `deps` de `silver/google_health_daily`
+    (toutes les tables sauf `google_health_exercise`, pivoté à part dans
+    `silver/google_health_exercise.sql` — événements discrets avec plusieurs
+    séances possibles le même jour, même logique que `health_workouts` pour
+    Apple Health) — une seule source de vérité plutôt que deux listes à
+    maintenir en parallèle.
 
 ### Contrainte : Python 3.14 vs écosystème dbt
 

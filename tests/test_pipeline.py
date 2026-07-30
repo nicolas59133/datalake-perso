@@ -241,6 +241,100 @@ def test_google_health_parse_weight():
     assert rows[0]["weight_kg"] == 70.5
 
 
+def test_google_health_parse_interval_metric():
+    from data_platform.ingestion.google_health import _parse_interval_metric
+
+    data_points = [
+        {
+            "dataSource": {"platform": "FITBIT"},
+            "activeZoneMinutes": {
+                "interval": {"startTime": "2026-07-29T16:11:00Z", "endTime": "2026-07-29T16:12:00Z"},
+                "heartRateZone": "FAT_BURN",
+                "activeZoneMinutes": "1",
+            },
+        }
+    ]
+    rows = _parse_interval_metric(data_points, "activeZoneMinutes", "activeZoneMinutes", "heartRateZone")
+    assert rows[0]["value"] == 1
+    assert rows[0]["category"] == "FAT_BURN"
+    assert rows[0]["data_point_id"]
+
+
+def test_google_health_parse_instant_metric():
+    from data_platform.ingestion.google_health import _parse_instant_metric
+
+    data_points = [
+        {
+            "dataSource": {"platform": "HEALTH_KIT"},
+            "bodyFat": {"sampleTime": {"physicalTime": "2026-07-22T03:40:26Z"}, "percentage": 21.545},
+        }
+    ]
+    rows = _parse_instant_metric(data_points, "bodyFat", "percentage")
+    assert rows[0]["value"] == 21.545
+
+
+def test_google_health_parse_daily_native():
+    from data_platform.ingestion.google_health import _parse_daily_native
+
+    data_points = [
+        {
+            "dailyRestingHeartRate": {
+                "date": {"year": 2026, "month": 7, "day": 30},
+                "beatsPerMinute": "62",
+            }
+        }
+    ]
+    rows = _parse_daily_native(data_points, "dailyRestingHeartRate", {"resting_bpm": "beatsPerMinute"})
+    assert rows[0]["date"] == "2026-07-30"
+    assert rows[0]["resting_bpm"] == 62.0
+
+
+def test_google_health_parse_exercise():
+    from data_platform.ingestion.google_health import parse_exercise
+
+    data_points = [
+        {
+            "dataSource": {"platform": "FITBIT"},
+            "exercise": {
+                "interval": {"startTime": "2026-07-28T05:42:43Z", "endTime": "2026-07-28T06:15:20Z"},
+                "exerciseType": "TREADMILL",
+                "displayName": "Tapis de course",
+                "activeDuration": "1954s",
+                "metricsSummary": {
+                    "caloriesKcal": 403,
+                    "distanceMillimeters": 2409648,
+                    "steps": "3434",
+                    "averageHeartRateBeatsPerMinute": "138",
+                    "activeZoneMinutes": "57",
+                },
+            },
+        }
+    ]
+    rows = parse_exercise(data_points)
+    assert rows[0]["exercise_type"] == "TREADMILL"
+    assert rows[0]["calories_kcal"] == 403
+    assert rows[0]["distance_m"] == 2409.648
+    assert rows[0]["steps"] == 3434
+    assert rows[0]["active_duration_s"] == 1954
+
+
+def test_google_health_bronze_specs_match_resources():
+    """Les tables déclarées dans assets/bronze.py (GOOGLE_HEALTH_SPECS)
+    doivent correspondre exactement aux tables que google_health_resources()
+    produit réellement — sinon un asset Dagster resterait "vide" en
+    permanence ou une table ne serait jamais exposée dans l'UI."""
+    from data_platform.assets.bronze import _GOOGLE_HEALTH_TABLES
+    from data_platform.ingestion import google_health as gh
+
+    expected = {"google_health_steps", "google_health_heart_rate_daily", "google_health_sleep",
+                "google_health_weight", "google_health_exercise"}
+    expected |= {table for table, *_ in gh._INTERVAL_METRICS}
+    expected |= {table for table, *_ in gh._INSTANT_METRICS}
+    expected |= {table for table, *_ in gh._DAILY_NATIVE_METRICS}
+
+    assert set(_GOOGLE_HEALTH_TABLES.keys()) == expected
+
+
 def test_google_health_missing_token():
     from data_platform.ingestion.google_health import _load_token
     import data_platform.ingestion.google_health as gh

@@ -17,9 +17,27 @@ sources:
         description: Anneaux d'activité Apple Health, un par jour.
       - name: google_health_steps
         description: Pas comptés par la Fitbit Air (Google Health API), par intervalle.
+      - name: google_health_distance
+        description: Distance parcourue par intervalle (Google Health API).
+      - name: google_health_active_zone_minutes
+        description: Minutes en zone cardio active par intervalle, avec la zone (Google Health API).
+      - name: google_health_sedentary_periods
+        description: Périodes sédentaires, intervalles sans valeur (Google Health API).
+      - name: google_health_activity_level
+        description: Niveau d'activité par intervalle (Google Health API).
       - name: google_health_heart_rate_daily
         description: Fréquence cardiaque agrégée par jour (avg/min/max), endpoint dailyRollUp (Google Health API).
+      - name: google_health_resting_heart_rate_daily
+        description: Fréquence cardiaque au repos, agrégée par jour côté API (Google Health API).
+      - name: google_health_hrv_daily
+        description: Variabilité de la fréquence cardiaque, agrégée par jour côté API (Google Health API).
+      - name: google_health_oxygen_saturation_daily
+        description: SpO2, agrégée par jour côté API (Google Health API).
       - name: google_health_sleep
         description: Sessions de sommeil (Google Health API).
       - name: google_health_weight
         description: Mesures de poids (Google Health API).
+      - name: google_health_body_fat
+        description: Mesures de masse grasse (Google Health API).
+      - name: google_health_exercise
+        description: Séances de sport (Google Health API).
