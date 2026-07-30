@@ -1,0 +1,10 @@
+version: 2
+
+models:
+  - name: google_health_exercise_minutes_by_type
+    description: Minutes totales par type d'exercice (Fitbit Air / Google Health).
+    columns:
+      - name: exercise_type
+        data_tests:
+          - unique
+          - not_null

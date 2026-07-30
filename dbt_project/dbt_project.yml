@@ -15,3 +15,6 @@ models:
   datalake_silver:
     silver:
       +materialized: table
+    gold:
+      +materialized: table
+      +schema: gold

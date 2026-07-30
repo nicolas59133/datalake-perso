@@ -1,13 +1,10 @@
 """Couche SILVER — modèles dbt (dbt-duckdb), orchestrés par Dagster.
 
-dagster-dbt (l'intégration officielle, qui génère un asset par modèle à partir
-du manifest dbt) n'est pas installable ici : sa dernière version épingle
-dagster==1.12.8, qui ne supporte pas Python 3.14 (le seul Python présent sur
-cette machine — voir CLAUDE.md). En attendant une release dagster-dbt
-compatible, on appelle `dbt build` en subprocess depuis des `@dg.multi_asset`
-qui déclarent à la main un noeud par modèle dbt, avec leurs dépendances vers
-les assets bronze correspondants — même niveau de granularité dans l'UI
-Dagster, sans la génération automatique.
+`dbt build` est lancé en subprocess via data_platform/dbt_utils.py (voir ce
+module pour le pourquoi, pas dagster-dbt) depuis des `@dg.multi_asset` qui
+déclarent à la main un noeud par modèle dbt, avec leurs dépendances vers les
+assets bronze correspondants — même niveau de granularité dans l'UI Dagster,
+sans la génération automatique.
 
 Deux groupes SÉPARÉS plutôt qu'un seul multi_asset pour tout : un
 `@dg.multi_asset` est tout-ou-rien (un `dbt build` qui échoue sur UN modèle
@@ -17,41 +14,13 @@ son groupe échoue sans jamais impacter météo/Withings/Google Health.
 """
 import os
 import shutil
-import subprocess
-import sys
-from pathlib import Path
 
 import dagster as dg
 
 from data_platform.assets.bronze import _GOOGLE_HEALTH_TABLES
-from data_platform.config import DUCKDB_PATH, DUCKDB_VIEW_PATH, ROOT
-
-DBT_PROJECT_DIR = ROOT / "dbt_project"
-# Utilise l'exécutable dbt du même venv que Dagster, sans dépendre du PATH courant.
-DBT_BIN = str(Path(sys.executable).parent / "dbt")
-
-
-def _dbt_build(context: dg.AssetExecutionContext, *model_names: str) -> None:
-    result = subprocess.run(
-        [
-            DBT_BIN,
-            "build",
-            "--project-dir",
-            str(DBT_PROJECT_DIR),
-            "--profiles-dir",
-            str(DBT_PROJECT_DIR),
-            "--select",
-            *model_names,
-        ],
-        cwd=ROOT,
-        env={**os.environ, "DUCKDB_PATH": DUCKDB_PATH},
-        capture_output=True,
-        text=True,
-    )
-    context.log.info(result.stdout)
-    if result.returncode != 0:
-        context.log.error(result.stderr)
-        raise RuntimeError(f"dbt build a échoué (code {result.returncode})")
+from data_platform.assets.gold import GOLD_SPECS
+from data_platform.config import DUCKDB_PATH, DUCKDB_VIEW_PATH
+from data_platform.dbt_utils import dbt_build
 
 
 CORE_SILVER_SPECS = [
@@ -96,7 +65,7 @@ CORE_SILVER_SPECS = [
 def silver_dbt_models_core(context: dg.AssetExecutionContext):
     """Sources fiables (pas d'export manuel requis). Groupe séparé
     d'Apple Health pour ne jamais être bloqué par son absence/échec."""
-    _dbt_build(context, "weather_daily", "withings_measures", "google_health_daily", "google_health_exercise")
+    dbt_build(context, "weather_daily", "withings_measures", "google_health_daily", "google_health_exercise")
     for spec in CORE_SILVER_SPECS:
         yield dg.MaterializeResult(asset_key=spec.key)
 
@@ -134,7 +103,7 @@ APPLE_HEALTH_SILVER_SPECS = [
 def silver_dbt_models_apple_health(context: dg.AssetExecutionContext):
     """Échoue tant que data/apple_health_export/export.xml n'est pas déposé
     (voir APPLE_HEALTH.md) — sans effet sur silver_dbt_models_core."""
-    _dbt_build(context, "health_daily", "health_workouts", "health_activity_summary")
+    dbt_build(context, "health_daily", "health_workouts", "health_activity_summary")
     for spec in APPLE_HEALTH_SILVER_SPECS:
         yield dg.MaterializeResult(asset_key=spec.key)
 
@@ -143,12 +112,12 @@ def silver_dbt_models_apple_health(context: dg.AssetExecutionContext):
     key=["ops", "duckdb_view_snapshot"],
     group_name="ops",
     kinds={"duckdb"},
-    deps=[spec.key for spec in CORE_SILVER_SPECS],
+    deps=[spec.key for spec in CORE_SILVER_SPECS] + [spec.key for spec in GOLD_SPECS],
     description=(
         "Copie de data/datalake.duckdb dédiée à scripts/duckdb_ui.py. DuckDB "
         "n'autorise qu'un writer/lecteur à la fois par fichier ; sans cette "
         "copie séparée, garder l'UI ouverte ferait échouer tout run Dagster "
-        "avec un lock conflict. Dépend seulement du groupe silver fiable (pas "
+        "avec un lock conflict. Dépend du groupe silver fiable + gold (pas "
         "Apple Health) pour toujours tourner même si celui-ci échoue."
     ),
 )

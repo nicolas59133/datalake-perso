@@ -113,12 +113,22 @@ les runs Dagster — voir "Contrainte : DuckDB n'autorise qu'un seul writer".
 - `data_platform/assets/bronze.py` — un asset Dagster par source. Chaque asset
   instancie **son propre** `dlt.pipeline(destination=duckdb(DUCKDB_PATH),
   dataset_name="bronze")` et écrit dans le schéma `bronze`.
-- `dbt_project/` — modèles SQL de la couche silver (`models/silver/*.sql`),
-  déclarant les tables bronze comme `source()` (`models/sources.yml`). Schéma
-  cible = `silver` (profiles.yml), donc `models/silver/weather_daily.sql`
+- `data_platform/assets/gold.py` — couche d'agrégats métier au-dessus de
+  silver (jointures/regroupements multi-source). `data_platform/dbt_utils.py`
+  centralise l'appel `dbt build` en subprocess, partagé par `silver.py` et
+  `gold.py` (évite la duplication). Un modèle gold référence silver via
+  `{{ ref(...) }}` (pas `source()`) -> dépendance de **données réelle**, donc
+  Dagster ordonne déjà correctement le step gold après silver, pas besoin de
+  dépendance ordinale comme pour Apple Health. `ops/duckdb_view_snapshot`
+  dépend aussi du groupe gold (en plus du groupe silver core).
+- `dbt_project/` — modèles SQL des couches silver et gold
+  (`models/silver/*.sql`, `models/gold/*.sql`), déclarant les tables bronze
+  comme `source()` (`models/sources.yml`). Schéma
+  cible par défaut = `silver` (profiles.yml), donc `models/silver/weather_daily.sql`
   produit `silver.weather_daily` (pas de préfixe grâce à l'override standard
-  `macros/generate_schema_name.sql`). Tests dbt (`not_null`/`unique`) dans
-  `models/silver/schema.yml`.
+  `macros/generate_schema_name.sql`). `models/gold/` a `+schema: gold` en dur
+  dans `dbt_project.yml` pour sortir de ce défaut. Tests dbt
+  (`not_null`/`unique`) dans `models/<couche>/schema.yml`.
 - `data_platform/assets/silver.py` — **PAS** l'intégration `dagster-dbt`
   (voir contrainte ci-dessous). Deux `@dg.multi_asset` séparés, chacun lançant
   un `dbt build --select <modèles du groupe>` en subprocess : `_core`
